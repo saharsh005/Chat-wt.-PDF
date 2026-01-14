@@ -1,50 +1,90 @@
-import express from "express";
 import dotenv from "dotenv";
-import { GoogleGenAI } from "@google/genai";
+import path from "path";
+import { fileURLToPath } from "url";
 
-// ✅ dotenv.config() ONLY ONCE, at the very top
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-console.log("✅ Server startup - GOOGLE_API_KEY length:", process.env.GOOGLE_API_KEY?.length || 0);
+// 🔴 FORCE dotenv to load from backend/.env
+dotenv.config({ path: path.join(__dirname, ".env") });
 
-// ✅ Pass apiKey explicitly
-const ai = new GoogleGenAI({
-  apiKey: process.env.GOOGLE_API_KEY
+console.log("SERVER ENV CHECK:", process.env.SUPABASE_URL);
+
+import express from "express";
+// import dotenv from "dotenv";
+import cors from "cors";
+import Groq from "groq-sdk";
+
+// ✅ 1. Load env FIRST
+// dotenv.config();
+
+// ✅ 2. Create app BEFORE using it
+const app = express();
+
+// ✅ 3. Core middleware
+app.use(express.json());
+
+app.use(
+  cors({
+    origin: "http://localhost:3001",
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  })
+);
+
+// Optional but safe
+//app.options("*", cors());
+
+// ✅ 4. Gemini sanity check (optional, safe to keep)
+
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
 });
 
-async function main() {
+(async () => {
   try {
-    const response = await ai.models.generateContentStream({
-      model: "gemini-2.5-flash-lite",
-      contents: [{ parts: [{ text: "hi" }] }]
+    const stream = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      messages: [
+        { role: "user", content: "hi" }
+      ],
+      stream: true,
     });
 
-    for await (const chunk of response) {
-      console.log("Gemini test:", chunk.text);
+    for await (const chunk of stream) {
+      const text = chunk.choices[0]?.delta?.content || "";
+      if (text) {
+        console.log("Groq test:", text);
+      }
     }
   } catch (err) {
     console.error("Server AI test failed:", err.message);
   }
-}
+})();
 
-await main();
 
-const app = express();
-app.use(express.json());
-
-// ✅ Import routes AFTER dotenv
+// ✅ 5. Import routes AFTER dotenv
 import upload from "./routes/upload.js";
 import chat from "./routes/chat.js";
 import quiz from "./routes/quiz.js";
 import explain from "./routes/explain.js";
 import summary from "./routes/summary.js";
+import { clerkAuth } from "./middleware/auth.js";
 
-app.use("/chat", chat);
-app.use("/quiz", quiz);
+// ✅ 6. Routes
+app.use("/chat",  chat);
+app.use("/quiz", clerkAuth, quiz);
 app.use("/explain", explain);
 app.use("/summary", summary);
-app.use("/upload", upload);
+app.use("/upload", clerkAuth,  upload);
 
-app.listen(3000, () =>
-  console.log("Server running on http://localhost:3000")
-);
+// ✅ 7. Health check (IMPORTANT for debugging)
+app.get("/", (req, res) => {
+  res.json({ status: "Backend running 🚀" });
+});
+
+// ✅ 8. Start server
+app.listen(3000, () => {
+  console.log("Server running on http://localhost:3000");
+});

@@ -14,3 +14,6 @@ redis_storage/
 # OS
 .DS_Store
 Thumbs.db
+
+backend/uploads/
+backend/db/*.db

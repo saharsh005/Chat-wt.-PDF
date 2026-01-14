@@ -1,8 +1,10 @@
 import express from "express";
-import { GoogleGenAI } from "@google/genai";
+//import { GoogleGenAI } from "@google/genai";
+import Groq from "groq-sdk";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { getEmbedding } from "../utils/embeddings.js";
-import { clerkAuth } from "../middleware/clerkAuth.js"; // your Clerk middleware
+import { clerkAuth } from "../middleware/auth.js";
+import { supabase } from "../utils/supabase.js";
 
 const router = express.Router();
 
@@ -12,21 +14,23 @@ const sessions = new Map();
 let ai = null;
 function getAiClient() {
   if (!ai) {
-    ai = new GoogleGenAI({
-      apiKey: process.env.GOOGLE_API_KEY
+    ai = new Groq({  // ✅ Already correct
+      apiKey: process.env.GROQ_API_KEY
     });
   }
-  return ai;
+  return ai;  // ✅ Returns client instance
 }
+
 
 const qdrant = new QdrantClient({
   url: "http://localhost:6333",
 });
 
 router.post("/", clerkAuth, async (req, res) => {
-  try {
-    const { userId } = req.user;        // From Clerk JWT
-    const { pdfId, question, chatId } = req.body;
+    try {
+      const userId = req.auth.userId;  // ✅ "user_37sbSBCIlkR8psSwoF9tqKDEDy5"
+      const { pdfId, question, chatId } = req.body;
+      
 
     console.log("🚀 Chat:", { pdfId, question: question.substring(0, 50) + "..." });
 
@@ -76,6 +80,14 @@ router.post("/", clerkAuth, async (req, res) => {
 
     console.log("📊 Found", hits.length, "chunks");
 
+    console.log("🔍 Searching collection:", collectionName);
+    console.log("🔍 For pdfId:", pdfId);
+
+    // Test collection exists + has data
+    const collections = await qdrant.getCollections();
+    console.log("📋 All collections:", collections.collections.map(c => c.name));
+
+
     if (!hits.length) {
       return res.json({ answer: "No relevant content found in document.", chatId: sessionKey });
     }
@@ -85,56 +97,56 @@ router.post("/", clerkAuth, async (req, res) => {
     console.log("📄 Context:", context.length, "chars");
 
     // 7) Build final prompt: history + document context
-    const finalPrompt = `You are an EXPERT TECHNICAL TUTOR teaching from this EXACT document.
+    const finalPrompt = `
+    You are an expert technical tutor.
 
-Below is the recent conversation between you and the user:
+    Your task is to explain the user's question using ONLY the information present in the provided document content.
+    Do NOT use any external knowledge.
 
-${historyText}
+    Use a clear, simple, and structured explanation that is easy to understand.
+    The response should be moderately detailed, not overly long, and not too brief.
 
-Use ONLY the DOCUMENT CHUNKS (SOURCE MATERIAL) below to answer the latest user question at the end.
+    Follow these rules strictly:
+    - Use clear section titles (no symbols, no markdown characters like *, #, or ---)
+    - Explain concepts from beginner level to slightly advanced level
+    - Include short and relevant code examples only where necessary
+    - Use simple language and direct explanations
+    - Keep the response well-organized and readable
+    - End with a short summary and key takeaways
+    - Do not repeat content unnecessarily
+    - Do not invent information outside the document
 
-**MANDATORY REQUIREMENTS:**
-1. Write 600-1200 WORDS minimum (count them)
-2. Use H1/H2 HEADINGS, BULLETS, NUMBERED LISTS
-3. QUOTE 5+ phrases DIRECTLY from chunks below
-4. Break down EVERY concept into beginner → advanced
-5. Include code examples, explanations, comparisons
-6. End with SUMMARY + KEY TAKEAWAYS
-7. NO external knowledge - ONLY chunks provided
+    Recent conversation context:
+    ${historyText}
 
-**DOCUMENT CHUNKS (SOURCE MATERIAL ONLY):**
-${context.substring(0, 18000)}
+    Document content to use as the ONLY source:
+    ${context.substring(0, 18000)}
 
-**LATEST USER QUESTION:** ${question}
+    User question:
+    ${question}
 
----
+    Now write a clean, structured explanation that directly answers the user's question based only on the document.
+    `;
 
-**${"=".repeat(20)} FULL TUTORIAL (${600}+ WORDS) ${"=".repeat(20)}**
+    // 8) Call Groq with your existing detailed config
+    // ✅ CORRECT:
+    const client = getAiClient();  // Your existing function
 
-Write comprehensive tutorial now:`;
-
-    // 8) Call Gemini with your existing detailed config
-    const client = getAiClient();
-    const response = await client.models.generateContent({
-      model: "gemini-2.5-flash-lite",
-      generationConfig: {
-        temperature: 0.3,        // Creative but focused
-        maxOutputTokens: 6000,   // MAXIMUM length
-        topP: 0.9,
-        topK: 50,
-        responseMimicPreset: "PROFESSIONAL"  // Formal tutor style
-      },
-      safetySettings: [
-        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" }
+    const completion = await client.chat.completions.create({
+      model: "llama-3.1-8b-instant",  // ✅ Correct model name
+      messages: [
+        {
+          role: "user",
+          content: finalPrompt
+        }
       ],
-      contents: [{
-        role: "user",
-        parts: [{ text: finalPrompt }]
-      }]
+      temperature: 0.3,
+      max_tokens: 6000,
+      top_p: 0.9,
+      stream: false
     });
 
-    const answer = response.text || "No response generated";
+    const answer = completion.choices[0].message.content || "No response generated";
 
     // 9) Save assistant reply to memory
     session.messages.push({ role: "assistant", content: answer });
@@ -151,10 +163,69 @@ Write comprehensive tutorial now:`;
       historyMessages: session.messages.length
     });
 
+    // 10) Save to Supabase (FIXED)
+    try {
+      let chatDbId = chatId;
+      
+      // Create chat if new (no chatId)
+      if (!chatId) {
+        const { data: newChat, error: chatError } = await supabase
+          .from('chats')
+          .insert({
+            user_id: userId,  // "user_37sbSBCIlkR8psSwoF9tqKDEDy5"
+            pdf_id: pdfId,
+            title: question.substring(0, 50) + '...'
+          })
+          .select('id')
+          .single();
+        
+        if (chatError) throw chatError;
+        chatDbId = newChat.id;
+        session.chatId = chatDbId;  // Store for future
+      }
+
+      // Save messages with VALID chat_id
+      await supabase
+        .from('messages')
+        .insert([
+          { chat_id: chatDbId, role: 'user', content: question },
+          { chat_id: chatDbId, role: 'assistant', content: answer }
+        ]);
+      
+      console.log('💾 Saved chat/messages:', chatDbId);
+    } catch (dbErr) {
+      console.error('DB save failed:', dbErr.message);
+    }
+
+
+
   } catch (err) {
     console.error("❌ Chat error:", err.message);
     res.status(500).json({ error: "Chat failed", debug: err.message });
   }
 });
 
+router.get("/", clerkAuth, async (req, res) => {
+  try {
+    // ✅ Direct query by Clerk user_id (TEXT)
+    const { data, error } = await supabase
+      .from("chats")
+      .select("id, title, created_at")
+      .eq("user_id", req.auth.userId)  // Full "user_xxx"
+      .order("created_at", { ascending: false });
+
+    res.json(data || []);
+  } catch (err) {
+    console.error("Chat list error:", err);
+    res.json([]);
+  }
+});
+
+
+
+
 export default router;
+
+// // Add this line:
+// module.exports = router;
+

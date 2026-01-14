@@ -2,6 +2,7 @@ import express from "express";
 import { GoogleGenAI } from "@google/genai";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { getEmbedding } from "../utils/embeddings.js";
+import { clerkAuth } from "../middleware/auth.js";
 
 const router = express.Router();
 const qdrant = new QdrantClient({ url: "http://localhost:6333" });
@@ -14,7 +15,7 @@ function getAi() {
 
 const sessions = new Map();
 
-router.post("/start", async (req, res) => {
+router.post("/start", clerkAuth, async (req, res) => {
   try {
     const { pdfId, numQuestions = 5, difficulty = "medium" } = req.body;
     
