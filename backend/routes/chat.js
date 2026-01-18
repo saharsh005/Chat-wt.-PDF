@@ -29,13 +29,48 @@ const qdrant = new QdrantClient({
 router.post("/", clerkAuth, async (req, res) => {
     try {
       const userId = req.auth.userId;  // ✅ "user_37sbSBCIlkR8psSwoF9tqKDEDy5"
-      const { pdfId, question, chatId } = req.body;
+
+      await supabase
+      .from("users")
+      .upsert({
+        clerk_id: userId
+      }, { onConflict: "clerk_id" });
+
+      let { pdfId, question, chatId } = req.body;
       
 
     console.log("🚀 Chat:", { pdfId, question: question.substring(0, 50) + "..." });
 
     if (!pdfId || !question) {
       return res.status(400).json({ error: "pdfId and question required" });
+    }
+
+    // 4️⃣ ENSURE PDF EXISTS
+    await supabase
+      .from("user_pdfs")
+      .upsert(
+        {
+          pdf_id: pdfId,
+          clerk_id: userId,
+          filename: "uploaded.pdf"
+        },
+        { onConflict: "pdf_id" }
+      );
+
+    // 5️⃣ CREATE CHAT (SAFE NOW)
+    if (!chatId) {
+      const { data: chat, error } = await supabase
+        .from("chats")
+        .insert({
+          clerk_id: userId,
+          pdf_id: pdfId,
+          title: question.slice(0, 60)
+        })
+        .select("id")
+        .single();
+
+      if (error) throw error;
+      chatId = chat.id;
     }
 
     // 1) Get or init session memory
@@ -172,7 +207,7 @@ router.post("/", clerkAuth, async (req, res) => {
         const { data: newChat, error: chatError } = await supabase
           .from('chats')
           .insert({
-            user_id: userId,  // "user_37sbSBCIlkR8psSwoF9tqKDEDy5"
+            clerk_id: userId,  // "user_37sbSBCIlkR8psSwoF9tqKDEDy5"
             pdf_id: pdfId,
             title: question.substring(0, 50) + '...'
           })
@@ -207,11 +242,11 @@ router.post("/", clerkAuth, async (req, res) => {
 
 router.get("/", clerkAuth, async (req, res) => {
   try {
-    // ✅ Direct query by Clerk user_id (TEXT)
+    // ✅ Direct query by Clerk clerk_id (TEXT)
     const { data, error } = await supabase
       .from("chats")
       .select("id, title, created_at")
-      .eq("user_id", req.auth.userId)  // Full "user_xxx"
+      .eq("clerk_id", req.auth.userId)  // Full "user_xxx"
       .order("created_at", { ascending: false });
 
     res.json(data || []);

@@ -83,7 +83,7 @@ useEffect(() => {
   // const { data, error } = await supabase
   //   .from('chats')
   //   .select('id, title, created_at')
-  //   .eq('user_id', user.id)
+  //   .eq('clerk_id', user.id)
   //   .order('created_at', { ascending: false });
 
   //   if (!error) setChats(data || []);
