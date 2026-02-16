@@ -8,6 +8,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { clerkAuth } from "../middleware/auth.js";
 import fs from "fs";
 import { pdfQueue } from "../queue/pdfQueue.js";
+import { supabase } from "../utils/supabase.js";
+
 
 const router = express.Router();
 
@@ -46,6 +48,37 @@ router.post("/", clerkAuth, upload.single("file"), async (req, res) => {
 
     const pdfId = `${userId}_${uuidv4()}`;
 
+        // 1️⃣ Ensure user exists
+    await supabase
+      .from("users")
+      .upsert(
+        { clerk_id: userId },
+        { onConflict: "clerk_id" }
+      );
+
+    // 2️⃣ Store PDF metadata
+    await supabase
+      .from("user_pdfs")
+      .insert({
+        pdf_id: pdfId,
+        clerk_id: userId,
+        filename: file.originalname
+      });
+
+    // 3️⃣ Create initial chat (EMPTY chat)
+    const { data: chat, error: chatError } = await supabase
+      .from("chats")
+      .insert({
+        clerk_id: userId,
+        pdf_id: pdfId,
+        title: file.originalname
+      })
+      .select("id")
+      .single();
+
+    if (chatError) throw chatError;
+
+
     await pdfQueue.add("process-pdf", {
       pdfId,
       userId,
@@ -55,8 +88,10 @@ router.post("/", clerkAuth, upload.single("file"), async (req, res) => {
 
     res.json({
       message: "Upload successful, processing started",
-      pdfId
+      pdfId,
+      chatId: chat.id
     });
+
   } catch (err) {
     console.error("Upload error:", err);
     res.status(500).json({ error: "Upload failed" });

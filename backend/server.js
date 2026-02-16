@@ -26,7 +26,7 @@ app.use(express.json());
 
 app.use(
   cors({
-    origin: "http://localhost:3001",
+    origin: "http://localhost:3000",
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"],
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -38,30 +38,30 @@ app.use(
 
 // ✅ 4. Gemini sanity check (optional, safe to keep)
 
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});
+// const groq = new Groq({
+//   apiKey: process.env.GROQ_API_KEY,
+// });
 
-(async () => {
-  try {
-    const stream = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [
-        { role: "user", content: "hi" }
-      ],
-      stream: true,
-    });
+// (async () => {
+//   try {
+//     const stream = await groq.chat.completions.create({
+//       model: "llama-3.1-8b-instant",
+//       messages: [
+//         { role: "user", content: "hi" }
+//       ],
+//       stream: true,
+//     });
 
-    for await (const chunk of stream) {
-      const text = chunk.choices[0]?.delta?.content || "";
-      if (text) {
-        console.log("Groq test:", text);
-      }
-    }
-  } catch (err) {
-    console.error("Server AI test failed:", err.message);
-  }
-})();
+//     for await (const chunk of stream) {
+//       const text = chunk.choices[0]?.delta?.content || "";
+//       if (text) {
+//         console.log("Groq test:", text);
+//       }
+//     }
+//   } catch (err) {
+//     console.error("Server AI test failed:", err.message);
+//   }
+// })();
 
 
 // ✅ 5. Import routes AFTER dotenv
@@ -85,6 +85,6 @@ app.get("/", (req, res) => {
 });
 
 // ✅ 8. Start server
-app.listen(3000, () => {
-  console.log("Server running on http://localhost:3000");
+app.listen(5000, () => {
+  console.log("Server running on http://localhost:5000");
 });

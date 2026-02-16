@@ -1,5 +1,4 @@
 import express from "express";
-//import { GoogleGenAI } from "@google/genai";
 import Groq from "groq-sdk";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { getEmbedding } from "../utils/embeddings.js";
@@ -8,103 +7,84 @@ import { supabase } from "../utils/supabase.js";
 
 const router = express.Router();
 
-// In‑memory chat sessions: Map<chatId, { userId, messages: [{role, content}] }>
-const sessions = new Map();
-
 let ai = null;
 function getAiClient() {
   if (!ai) {
-    ai = new Groq({  // ✅ Already correct
+    ai = new Groq({ 
       apiKey: process.env.GROQ_API_KEY
     });
   }
-  return ai;  // ✅ Returns client instance
+  return ai;
 }
-
 
 const qdrant = new QdrantClient({
   url: "http://localhost:6333",
 });
 
+// ADD THIS NEW ROUTE
+router.post('/create', clerkAuth, async (req, res) => {
+  try {
+    const { pdfId } = req.body;
+    const userId = req.auth.userId;
+    
+    const { data: pdfData } = await supabase
+      .from('user_pdfs')
+      .select('filename')
+      .eq('pdf_id', pdfId)
+      .single();
+
+    const pdfName = pdfData?.filename?.replace('.pdf', '') || 'Document';
+    
+    const { data: newChat, error } = await supabase
+      .from('chats')
+      .insert({
+        clerk_id: userId,
+        pdf_id: pdfId,
+        title: pdfName.substring(0, 50)
+      })
+      .select('id, title, pdf_id, created_at')
+      .single();
+    
+    if (error) throw error;
+    
+    console.log('🆕 Created chat:', newChat.title);
+    res.json(newChat);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 router.post("/", clerkAuth, async (req, res) => {
-    try {
-      const userId = req.auth.userId;  // ✅ "user_37sbSBCIlkR8psSwoF9tqKDEDy5"
+  try {
+    const userId = req.auth.userId;
+    const { pdfId, question, chatId } = req.body; // ← NO 'let chatDbId'
 
-      await supabase
-      .from("users")
-      .upsert({
-        clerk_id: userId
-      }, { onConflict: "clerk_id" });
+    console.log("🚀 Chat:", { pdfId, question: question.substring(0, 50) + "...", chatId });
 
-      let { pdfId, question, chatId } = req.body;
-      
-
-    console.log("🚀 Chat:", { pdfId, question: question.substring(0, 50) + "..." });
-
-    if (!pdfId || !question) {
-      return res.status(400).json({ error: "pdfId and question required" });
-    }
-
-    // 4️⃣ ENSURE PDF EXISTS
-    await supabase
-      .from("user_pdfs")
-      .upsert(
-        {
-          pdf_id: pdfId,
-          clerk_id: userId,
-          filename: "uploaded.pdf"
-        },
-        { onConflict: "pdf_id" }
-      );
-
-    // 5️⃣ CREATE CHAT (SAFE NOW)
-    if (!chatId) {
-      const { data: chat, error } = await supabase
-        .from("chats")
-        .insert({
-          clerk_id: userId,
-          pdf_id: pdfId,
-          title: question.slice(0, 60)
-        })
-        .select("id")
-        .single();
-
-      if (error) throw error;
-      chatId = chat.id;
-    }
-
-    // 1) Get or init session memory
-    let sessionKey = chatId;
-    if (!sessionKey) {
-      // If no chatId sent, create one using pdf+user combo
-      sessionKey = `${userId}:${pdfId}`;
-    }
-
-    if (!sessions.has(sessionKey)) {
-      sessions.set(sessionKey, {
-        userId,
-        messages: []   // { role: 'user'|'assistant', content: string }
+    // 🔥 REPLACE entire validation - NO auto-create, NO chatDbId
+    if (!question || !chatId || !pdfId) {
+      return res.status(400).json({
+        error: "Missing required fields",
+        received: { pdfId, chatId, question: !!question }
       });
     }
 
-    const session = sessions.get(sessionKey);
 
-    // 2) Add current user question to memory (will be used for RAG + prompt)
-    session.messages.push({ role: "user", content: question });
+    // Use chatId directly - NO chatDbId variable needed
+    const { data: recentMessages } = await supabase
+      .from("messages")
+      .select("role, content")
+      .eq("chat_id", chatId)  // ← Use chatId directly
+      .order("created_at", { ascending: false })
+      .limit(6);
+    const historyText = recentMessages?.reverse().map(m => `${m.role.toUpperCase()}: ${m.content}`).join("\n") || "";
 
-    // 3) Build short chat history text (last N messages)
-    const historyWindow = 8; // last 8 messages
-    const recentMessages = session.messages.slice(-historyWindow);
-    const historyText = recentMessages
-      .map(m => `${m.role.toUpperCase()}: ${m.content}`)
-      .join("\n");
-
-    // 4) User-specific collection
     const collectionName = `pdfs_${userId}`;
-
-    // 5) Search relevant chunks from Qdrant
     const queryVector = await getEmbedding(question);
-    const hits = await qdrant.search(collectionName, {
+
+    // 🔍 SMART SEARCH: Try exact pdfId FIRST, fallback to best chunks
+    let hits = await qdrant.search(collectionName, {
       vector: queryVector,
       limit: 12,
       with_payload: true,
@@ -113,25 +93,29 @@ router.post("/", clerkAuth, async (req, res) => {
       }
     });
 
-    console.log("📊 Found", hits.length, "chunks");
+    console.log("📊 Exact pdfId chunks:", hits.length);
 
-    console.log("🔍 Searching collection:", collectionName);
-    console.log("🔍 For pdfId:", pdfId);
-
-    // Test collection exists + has data
-    const collections = await qdrant.getCollections();
-    console.log("📋 All collections:", collections.collections.map(c => c.name));
-
-
+    // FALLBACK: If no exact match, use BEST chunks regardless of pdfId
     if (!hits.length) {
-      return res.json({ answer: "No relevant content found in document.", chatId: sessionKey });
+      console.log("⚠️ No chunks for pdfId, using best matches...");
+      hits = await qdrant.search(collectionName, {
+        vector: queryVector,
+        limit: 12,
+        with_payload: true
+      });
+      console.log("📊 Fallback chunks:", hits.length);
     }
 
-    // 6) Build context from chunks
-    const context = hits.map(h => h.payload.text).join("\n\n---\n\n");
-    console.log("📄 Context:", context.length, "chars");
+    if (!hits.length) {
+      const answer = "No content found in your documents. Please upload a new PDF.";
+      await supabase.from('messages').insert([
+        { chat_id: chatId, role: 'user', content: question },
+        { chat_id: chatId, role: 'assistant', content: answer }
+      ]);
+      return res.json({ chatId: chatDbId, answer, sources: [], chunkCount: 0 });
+    }
 
-    // 7) Build final prompt: history + document context
+    const context = hits.map(h => h.payload.text).join("\n\n---\n\n");
     const finalPrompt = `
     You are an expert technical tutor.
 
@@ -163,92 +147,48 @@ router.post("/", clerkAuth, async (req, res) => {
     Now write a clean, structured explanation that directly answers the user's question based only on the document.
     `;
 
-    // 8) Call Groq with your existing detailed config
-    // ✅ CORRECT:
-    const client = getAiClient();  // Your existing function
+        const client = getAiClient();
+        const completion = await client.chat.completions.create({
+          model: "llama-3.1-8b-instant",
+          messages: [{ role: "user", content: finalPrompt }],
+          temperature: 0.3,
+          max_tokens: 6000
+        });
 
-    const completion = await client.chat.completions.create({
-      model: "llama-3.1-8b-instant",  // ✅ Correct model name
-      messages: [
-        {
-          role: "user",
-          content: finalPrompt
-        }
-      ],
-      temperature: 0.3,
-      max_tokens: 6000,
-      top_p: 0.9,
-      stream: false
-    });
+    const answer = completion.choices[0].message.content;
 
-    const answer = completion.choices[0].message.content || "No response generated";
-
-    // 9) Save assistant reply to memory
-    session.messages.push({ role: "assistant", content: answer });
+    await supabase.from('messages').insert([
+      { chat_id: chatId, role: 'user', content: question },
+      { chat_id: chatId, role: 'assistant', content: answer }
+    ]);
 
     res.json({
-      chatId: sessionKey,
+      chatId,
       answer,
-      sources: hits.map(h => ({
+      sources: hits.slice(0, 5).map(h => ({
         page: h.payload.page,
+        pdfId: h.payload.pdfId,
         score: Math.round(h.score * 100),
         preview: h.payload.text.substring(0, 100) + "..."
       })),
-      chunkCount: hits.length,
-      historyMessages: session.messages.length
+      chunkCount: hits.length
     });
 
-    // 10) Save to Supabase (FIXED)
-    try {
-      let chatDbId = chatId;
-      
-      // Create chat if new (no chatId)
-      if (!chatId) {
-        const { data: newChat, error: chatError } = await supabase
-          .from('chats')
-          .insert({
-            clerk_id: userId,  // "user_37sbSBCIlkR8psSwoF9tqKDEDy5"
-            pdf_id: pdfId,
-            title: question.substring(0, 50) + '...'
-          })
-          .select('id')
-          .single();
-        
-        if (chatError) throw chatError;
-        chatDbId = newChat.id;
-        session.chatId = chatDbId;  // Store for future
-      }
-
-      // Save messages with VALID chat_id
-      await supabase
-        .from('messages')
-        .insert([
-          { chat_id: chatDbId, role: 'user', content: question },
-          { chat_id: chatDbId, role: 'assistant', content: answer }
-        ]);
-      
-      console.log('💾 Saved chat/messages:', chatDbId);
-    } catch (dbErr) {
-      console.error('DB save failed:', dbErr.message);
-    }
-
-
-
   } catch (err) {
-    console.error("❌ Chat error:", err.message);
+    console.error("❌ Error:", err.message);
     res.status(500).json({ error: "Chat failed", debug: err.message });
   }
 });
 
 router.get("/", clerkAuth, async (req, res) => {
   try {
-    // ✅ Direct query by Clerk clerk_id (TEXT)
     const { data, error } = await supabase
       .from("chats")
-      .select("id, title, created_at")
-      .eq("clerk_id", req.auth.userId)  // Full "user_xxx"
+      .select("id, title, pdf_id, created_at")
+      .eq("clerk_id", req.auth.userId)
       .order("created_at", { ascending: false });
 
+    if (error) throw error;
     res.json(data || []);
   } catch (err) {
     console.error("Chat list error:", err);
@@ -256,11 +196,47 @@ router.get("/", clerkAuth, async (req, res) => {
   }
 });
 
+router.get("/:chatId", clerkAuth, async (req, res) => {
+  try {
+    const { chatId } = req.params;
+
+    const { data, error } = await supabase
+      .from("chats")
+      .select("id, title, pdf_id, created_at")
+      .eq("id", chatId)
+      .eq("clerk_id", req.auth.userId)
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({ error: "Chat not found" });
+    }
+
+    res.json(data);
+  } catch (err) {
+    console.error("Load chat error:", err.message);
+    res.status(500).json({ error: "Failed to load chat" });
+  }
+});
 
 
+
+router.get("/:chatId/messages", clerkAuth, async (req, res) => {
+  try {
+    const { chatId } = req.params;
+
+    const { data, error } = await supabase
+      .from("messages")
+      .select("id, role, content, created_at")
+      .eq("chat_id", chatId)
+      .order("created_at", { ascending: true });
+
+    if (error) throw error;
+
+    res.json(data || []);
+  } catch (err) {
+    console.error("Load messages error:", err.message);
+    res.status(500).json({ error: "Failed to load messages" });
+  }
+});
 
 export default router;
-
-// // Add this line:
-// module.exports = router;
-
