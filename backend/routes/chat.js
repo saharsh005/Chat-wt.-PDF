@@ -112,10 +112,28 @@ router.post("/", clerkAuth, async (req, res) => {
         { chat_id: chatId, role: 'user', content: question },
         { chat_id: chatId, role: 'assistant', content: answer }
       ]);
-      return res.json({ chatId: chatDbId, answer, sources: [], chunkCount: 0 });
+      return res.json({ chatId, answer, sources: [], chunkCount: 0 });
     }
 
+    // 🔎 Extract page numbers from retrieved chunks
+    const pagesUsed = [
+      ...new Set(
+        hits
+          .map(h => h.payload?.page)
+          .filter(p => p !== undefined && p !== null)
+      )
+    ].sort((a, b) => a - b);
+
+    // 🖨 Console log page numbers
+    if (pagesUsed.length) {
+      console.log(`📄 Answer derived from pages: ${pagesUsed.join(", ")}`);
+    } else {
+      console.log("📄 No page metadata available in retrieved chunks");
+    }
+
+    // Build context
     const context = hits.map(h => h.payload.text).join("\n\n---\n\n");
+
     const finalPrompt = `
     You are an expert technical tutor.
 

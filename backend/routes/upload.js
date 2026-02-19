@@ -14,23 +14,18 @@ import { supabase } from "../utils/supabase.js";
 const router = express.Router();
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: 'uploads/',
-    limits: { fileSize: 200 * 1024 * 1024 },
-    filename: (req, file, cb) => {
-      cb(null, `${Date.now()}-${file.originalname}`);
-    }
-  }),
+  storage: multer.memoryStorage(),
   limits: {
-    fileSize: 1024 * 1024 * 200 // ✅ 200MB (change if needed)
+    fileSize: 25 * 1024 * 1024 // 25MB
   },
   fileFilter: (req, file, cb) => {
-    if (file.mimetype !== 'application/pdf') {
-      return cb(new Error('Only PDFs allowed'));
+    if (file.mimetype !== "application/pdf") {
+      return cb(new Error("Only PDFs allowed"));
     }
     cb(null, true);
   }
 });
+
 
 const qdrant = new QdrantClient({
   url: "http://localhost:6333",
@@ -48,6 +43,17 @@ router.post("/", clerkAuth, upload.single("file"), async (req, res) => {
 
     const pdfId = `${userId}_${uuidv4()}`;
 
+    const storagePath = `${userId}/${pdfId}.pdf`;
+
+    const { error: storageError } = await supabase.storage
+      .from("pdfs")
+      .upload(storagePath, file.buffer, {
+        contentType: "application/pdf"
+      });
+
+    if (storageError) throw storageError;
+
+
         // 1️⃣ Ensure user exists
     await supabase
       .from("users")
@@ -62,8 +68,10 @@ router.post("/", clerkAuth, upload.single("file"), async (req, res) => {
       .insert({
         pdf_id: pdfId,
         clerk_id: userId,
-        filename: file.originalname
+        filename: file.originalname,
+        storage_path: storagePath
       });
+
 
     // 3️⃣ Create initial chat (EMPTY chat)
     const { data: chat, error: chatError } = await supabase
@@ -82,9 +90,9 @@ router.post("/", clerkAuth, upload.single("file"), async (req, res) => {
     await pdfQueue.add("process-pdf", {
       pdfId,
       userId,
-      filePath: file.path,
-      fileName: file.originalname
+      storagePath
     });
+
 
     res.json({
       message: "Upload successful, processing started",

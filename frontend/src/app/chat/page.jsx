@@ -44,7 +44,7 @@ export default function ChatIndexPage() {
 
   const openChat = (chatId) => {
     router.push(`/chat/${chatId}`);
-  };
+  };33332
 
   if (loading) {
     return (
