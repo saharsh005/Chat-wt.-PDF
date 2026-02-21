@@ -7,9 +7,13 @@ const router = express.Router();
 router.get("/:pdfId", clerkAuth, async (req, res) => {
   try {
     const { pdfId } = req.params;
-    const { userId } = req.auth;
 
-    // 1️⃣ Get storage_path from DB
+    if (!req.auth || !req.auth.userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const userId = req.auth.userId;
+
     const { data: pdf, error } = await supabase
       .from("user_pdfs")
       .select("storage_path")
@@ -21,7 +25,6 @@ router.get("/:pdfId", clerkAuth, async (req, res) => {
       return res.status(404).json({ error: "PDF not found" });
     }
 
-    // 2️⃣ Generate signed URL (valid for 1 hour)
     const { data: signedData, error: signedError } =
       await supabase.storage
         .from("pdfs")
@@ -36,5 +39,6 @@ router.get("/:pdfId", clerkAuth, async (req, res) => {
     res.status(500).json({ error: "Failed to fetch PDF" });
   }
 });
+
 
 export default router;

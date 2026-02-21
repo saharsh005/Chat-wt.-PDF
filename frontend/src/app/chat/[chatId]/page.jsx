@@ -4,6 +4,8 @@ import { useUser, useAuth } from '@clerk/nextjs';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Upload, Send, History, ChevronLeft, X, MessageSquare, FileText, Plus } from 'lucide-react';
 import { useRouter, useParams } from "next/navigation";
+import PdfViewer from "../../../component/PdfViewer.jsx";
+
 
 export default function ChatPage() {
   console.log("🔥 THIS CHAT PAGE IS RUNNING");
@@ -321,25 +323,7 @@ export default function ChatPage() {
 
           <div className="flex-1 overflow-hidden">
             {pdfId ? (
-              // PDF Viewer (placeholder)
-              <div className="h-full bg-gray-50 flex flex-col">
-                <div className="px-4 py-3 border-b border-gray-200 bg-white flex items-center justify-between">
-                  <div className="flex items-center gap-4 text-sm">
-                    <span>Page 1 of 12</span>
-                  </div>
-                </div>
-                <div className="flex-1 p-8 overflow-auto">
-                  <div className="max-w-3xl mx-auto bg-white shadow-lg rounded-lg p-10">
-                    <h1 className="text-3xl font-bold text-gray-900 mb-8 text-center">
-                      Document Preview
-                    </h1>
-                    <div className="space-y-4 text-gray-700">
-                      <p>PDF viewer will render here based on pdfId from URL.</p>
-                      <p>Current PDF ID: <code className="bg-gray-100 px-2 py-1 rounded text-sm">{pdfId}</code></p>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <PdfViewer pdfId={pdfId} />
             ) : (
               <div className="h-full flex items-center justify-center p-12">
                 <div className="text-center max-w-md">
