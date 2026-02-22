@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 
-export default function PdfViewer({ pdfId }) {
+export default function PdfViewer({ pdfId, page }) {
   const [url, setUrl] = useState(null);
   const { getToken } = useAuth();
 
@@ -35,11 +35,12 @@ export default function PdfViewer({ pdfId }) {
 
   return (
     <div className="h-full w-full">
-      <iframe
-        src={url}
-        className="w-full h-full border-none"
-        title="PDF Viewer"
-      />
+    <iframe
+      key={page}   // 🔥 THIS LINE FORCES RELOAD
+      src={`${url}#page=${page || 1}`}
+      className="w-full h-full border-none"
+      title="PDF Viewer"
+    />
     </div>
   );
 }

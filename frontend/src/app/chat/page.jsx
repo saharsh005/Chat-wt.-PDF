@@ -12,7 +12,7 @@ export default function ChatIndexPage() {
 
   const [chats, setChats] = useState([]);
   const [loading, setLoading] = useState(true);
-
+  const [uploading, setUploading] = useState(false);
   useEffect(() => {
     if (!isLoaded) return;
 
@@ -42,6 +42,53 @@ export default function ChatIndexPage() {
     loadChats();
   }, [isLoaded, getToken]);
 
+  const uploadPDF = async (file) => {
+    if (!file) return;
+
+    setUploading(true);
+
+    const formData = new FormData();
+    formData.append('pdf', file);   // MUST match upload.single("pdf")
+
+    try {
+      const token = await getToken();
+
+      const uploadRes = await fetch(`http://localhost:5000/upload`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`
+        },
+        body: formData
+      });
+
+      const text = await uploadRes.text();
+      console.log("Upload response:", text);
+
+      if (!uploadRes.ok) {
+        throw new Error("Upload failed");
+      }
+
+      const uploadData = JSON.parse(text);
+
+      const chatRes = await fetch(`http://localhost:5000/chat/create`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ pdfId: uploadData.pdfId })
+      });
+
+      const newChat = await chatRes.json();
+      router.push(`/chat/${newChat.id}`);
+
+    } catch (err) {
+      console.error("Upload failed:", err);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const openChat = (chatId) => {
     router.push(`/chat/${chatId}`);
   };33332
@@ -60,6 +107,19 @@ export default function ChatIndexPage() {
       {/* Sidebar */}
       <div className="w-80 border-r border-gray-200 p-4 overflow-y-auto">
         <h2 className="text-lg font-semibold mb-4">Your Chats</h2>
+
+        <div className="mb-4">
+          <label className="block text-sm font-medium mb-2">
+            Upload New PDF
+          </label>
+
+          <input
+            type="file"
+            accept="application/pdf"
+            onChange={(e) => uploadPDF(e.target.files[0])}
+            className="w-full text-sm"
+          />
+        </div>
 
         {chats.length === 0 ? (
           <p className="text-gray-500 text-sm">

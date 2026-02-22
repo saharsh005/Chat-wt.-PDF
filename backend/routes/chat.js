@@ -86,7 +86,7 @@ router.post("/", clerkAuth, async (req, res) => {
     // 🔍 SMART SEARCH: Try exact pdfId FIRST, fallback to best chunks
     let hits = await qdrant.search(collectionName, {
       vector: queryVector,
-      limit: 12,
+      limit: 3,
       with_payload: true,
       filter: {
         must: [{ key: "pdfId", match: { value: pdfId } }]
@@ -100,7 +100,7 @@ router.post("/", clerkAuth, async (req, res) => {
       console.log("⚠️ No chunks for pdfId, using best matches...");
       hits = await qdrant.search(collectionName, {
         vector: queryVector,
-        limit: 12,
+        limit: 3,
         with_payload: true
       });
       console.log("📊 Fallback chunks:", hits.length);
@@ -180,9 +180,26 @@ router.post("/", clerkAuth, async (req, res) => {
       { chat_id: chatId, role: 'assistant', content: answer }
     ]);
 
+    // // Count page frequency
+    // const pageFrequency = {};
+
+    // hits.forEach(hit => {
+    //   const p = hit.payload?.page;
+    //   if (p !== undefined && p !== null) {
+    //     pageFrequency[p] = (pageFrequency[p] || 0) + 1;
+    //   }
+    // });
+
+    // // Get page with highest frequency
+    // const dominantPage = Object.entries(pageFrequency)
+    //   .sort((a, b) => b[1] - a[1])[0]?.[0];
+
+    // console.log("🎯 Dominant answer page:", dominantPage);
+
     res.json({
       chatId,
       answer,
+      page: hits[0]?.payload?.page || 1,
       sources: hits.slice(0, 5).map(h => ({
         page: h.payload.page,
         pdfId: h.payload.pdfId,
@@ -191,6 +208,10 @@ router.post("/", clerkAuth, async (req, res) => {
       })),
       chunkCount: hits.length
     });
+
+    console.log("Top hit page:", hits[0]?.payload?.page);
+
+
 
   } catch (err) {
     console.error("❌ Error:", err.message);

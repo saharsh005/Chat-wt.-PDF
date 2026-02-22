@@ -32,7 +32,7 @@ const qdrant = new QdrantClient({
   timeout: 120000 // 2 minutes
 });
 
-router.post("/", clerkAuth, upload.single("file"), async (req, res) => {
+router.post("/", clerkAuth, upload.single("pdf"), async (req, res) => {
   try {
     const { userId } = req.auth;
     const file = req.file;

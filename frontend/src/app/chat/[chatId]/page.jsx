@@ -25,6 +25,7 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [uploading, setUploading] = useState(false);
   const [chats, setChats] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const messagesEndRef = useRef(null);
@@ -200,6 +201,7 @@ export default function ChatPage() {
 
       const data = await res.json();
       setMessages(prev => [...prev, { role: "assistant", content: data.answer }]);
+      setCurrentPage(data.page || 1);
 
     } catch (err) {
       console.error("❌ Send failed:", err.message);
@@ -323,7 +325,7 @@ export default function ChatPage() {
 
           <div className="flex-1 overflow-hidden">
             {pdfId ? (
-              <PdfViewer pdfId={pdfId} />
+              <PdfViewer pdfId={pdfId} page={currentPage} />
             ) : (
               <div className="h-full flex items-center justify-center p-12">
                 <div className="text-center max-w-md">
