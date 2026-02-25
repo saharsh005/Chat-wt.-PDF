@@ -196,6 +196,12 @@ router.post("/", clerkAuth, async (req, res) => {
 
     // console.log("🎯 Dominant answer page:", dominantPage);
 
+    await supabase
+    .from("chats")
+    .update({ updated_at: new Date() })
+    .eq("id", chatId);
+
+
     res.json({
       chatId,
       answer,

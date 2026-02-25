@@ -123,7 +123,7 @@ export default function ChatPage() {
     setUploading(true);
 
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('pdf', file);
 
     try {
       const token = await getToken();
@@ -137,20 +137,8 @@ export default function ChatPage() {
       if (!uploadRes.ok) throw new Error('Upload failed');
       const uploadData = await uploadRes.json();
 
-      const chatRes = await fetch(`http://localhost:5000/chat/create`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ pdfId: uploadData.pdfId })
-      });
-
-      if (!chatRes.ok) throw new Error('Chat creation failed');
-      
-      const newChat = await chatRes.json();
-      
-      router.push(`/chat/${newChat.id}`);
+      // Upload already creates chat
+      router.push(`/chat/${uploadData.chatId}`);
 
     } catch (err) {
       console.error('Upload failed:', err);
