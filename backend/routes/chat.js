@@ -24,51 +24,61 @@ const qdrant = new QdrantClient({
 // ADD THIS NEW ROUTE
 router.post('/create', clerkAuth, async (req, res) => {
   try {
-    const { pdfId } = req.body;
+    const { workspaceId } = req.body;
     const userId = req.auth.userId;
-    
-    const { data: pdfData } = await supabase
-      .from('user_pdfs')
-      .select('filename')
-      .eq('pdf_id', pdfId)
-      .single();
 
-    const pdfName = pdfData?.filename?.replace('.pdf', '') || 'Document';
-    
+    if (!workspaceId) {
+      return res.status(400).json({ error: "workspaceId is required" });
+    }
+
     const { data: newChat, error } = await supabase
       .from('chats')
       .insert({
         clerk_id: userId,
-        pdf_id: pdfId,
-        title: pdfName.substring(0, 50)
+        workspace_id: workspaceId,
+        title: "Research Chat"
       })
-      .select('id, title, pdf_id, created_at')
+      .select('id, title, workspace_id, created_at')
       .single();
-    
+
     if (error) throw error;
-    
-    console.log('🆕 Created chat:', newChat.title);
+
+    console.log('🆕 Created workspace chat');
     res.json(newChat);
+
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
 
+
 router.post("/", clerkAuth, async (req, res) => {
   try {
     const userId = req.auth.userId;
-    const { pdfId, question, chatId } = req.body; // ← NO 'let chatDbId'
+    const { question, chatId } = req.body; // ← NO 'let chatDbId'
 
-    console.log("🚀 Chat:", { pdfId, question: question.substring(0, 50) + "...", chatId });
+    console.log("🚀 Chat:", { question: question.substring(0, 50) + "...", chatId });
 
     // 🔥 REPLACE entire validation - NO auto-create, NO chatDbId
-    if (!question || !chatId || !pdfId) {
+    if (!question || !chatId) {
       return res.status(400).json({
         error: "Missing required fields",
-        received: { pdfId, chatId, question: !!question }
+        received: { chatId, question: !!question }
       });
     }
+
+    const { data: chatData } = await supabase
+      .from("chats")
+      .select("workspace_id")
+      .eq("id", chatId)
+      .single();
+
+    if (!chatData) {
+      return res.status(404).json({ error: "Chat not found" });
+    }
+
+    const workspaceId = chatData.workspace_id;
 
 
     // Use chatId directly - NO chatDbId variable needed
@@ -89,22 +99,24 @@ router.post("/", clerkAuth, async (req, res) => {
       limit: 3,
       with_payload: true,
       filter: {
-        must: [{ key: "pdfId", match: { value: pdfId } }]
+        must: [
+          { key: "workspaceId", match: { value: workspaceId } }
+        ]
       }
     });
 
     console.log("📊 Exact pdfId chunks:", hits.length);
 
     // FALLBACK: If no exact match, use BEST chunks regardless of pdfId
-    if (!hits.length) {
-      console.log("⚠️ No chunks for pdfId, using best matches...");
-      hits = await qdrant.search(collectionName, {
-        vector: queryVector,
-        limit: 3,
-        with_payload: true
-      });
-      console.log("📊 Fallback chunks:", hits.length);
-    }
+    // if (!hits.length) {
+    //   console.log("⚠️ No chunks for pdfId, using best matches...");
+    //   hits = await qdrant.search(collectionName, {
+    //     vector: queryVector,
+    //     limit: 3,
+    //     with_payload: true
+    //   });
+    //   console.log("📊 Fallback chunks:", hits.length);
+    // }
 
     if (!hits.length) {
       const answer = "No content found in your documents. Please upload a new PDF.";
@@ -229,7 +241,7 @@ router.get("/", clerkAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("chats")
-      .select("id, title, pdf_id, created_at")
+      .select("id, title, workspace_id, created_at")
       .eq("clerk_id", req.auth.userId)
       .order("created_at", { ascending: false });
 
@@ -247,7 +259,7 @@ router.get("/:chatId", clerkAuth, async (req, res) => {
 
     const { data, error } = await supabase
       .from("chats")
-      .select("id, title, pdf_id, created_at")
+      .select("id, title, workspace_id, created_at")
       .eq("id", chatId)
       .eq("clerk_id", req.auth.userId)
       .single();

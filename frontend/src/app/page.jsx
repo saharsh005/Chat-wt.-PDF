@@ -11,7 +11,7 @@ export default function Home() {
         
         <SignedOut>
           <div className="space-y-4">
-            <SignInButton mode="modal" redirectUrl="/chat">
+            <SignInButton mode="modal" redirectUrl="/workspace">
               <button className="px-8 py-4 bg-white text-blue-600 rounded-xl text-lg font-semibold shadow-2xl hover:shadow-3xl transition-all">
                 🚀 Get Started - Login
               </button>
@@ -21,7 +21,7 @@ export default function Home() {
         
         <SignedIn>
           <div className="flex gap-6 justify-center flex-wrap">
-            <Link href="/chat">
+            <Link href="/workspace">
               <button className="px-8 py-4 bg-white/20 backdrop-blur-xl text-white rounded-xl text-lg font-semibold hover:bg-white/30 transition-all">
                 💬 Chat with PDFs
               </button>

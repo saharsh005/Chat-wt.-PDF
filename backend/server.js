@@ -72,8 +72,11 @@ import explain from "./routes/explain.js";
 import summary from "./routes/summary.js";
 import { clerkAuth } from "./middleware/auth.js";
 import pdfRoutes from "./routes/pdf.js";
+import workspaceRoutes from "./routes/workspace.js";
+
 
 // ✅ 6. Routes
+app.use("/workspace", workspaceRoutes);
 app.use("/pdf", pdfRoutes);
 app.use("/chat",  chat);
 app.use("/quiz", clerkAuth, quiz);
