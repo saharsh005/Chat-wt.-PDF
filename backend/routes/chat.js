@@ -147,34 +147,49 @@ router.post("/", clerkAuth, async (req, res) => {
     const context = hits.map(h => h.payload.text).join("\n\n---\n\n");
 
     const finalPrompt = `
-    You are an expert technical tutor.
+    You are an expert technical tutor and experienced researcher.
 
     Your task is to explain the user's question using ONLY the information present in the provided document content.
     Do NOT use any external knowledge.
 
     Use a clear, simple, and structured explanation that is easy to understand.
     The response should be moderately detailed, not overly long, and not too brief.
+    
+    ALSO, identify 1-3 research gaps mentioned or implied in the text related to the user's question (e.g., Methodological Gap, Theoretical Gap, Empirical Gap, System Architecture Gap, etc.).
+
+    You MUST respond in valid JSON format exactly matching this structure:
+    {
+      "answer": "Your detailed explanation string here, using markdown formatting as needed...",
+      "gaps": [
+        {
+          "type": "METHODOLOGICAL GAP",
+          "title": "Short descriptive title of the gap",
+          "description": "Detailed explanation of what the gap is and why it exists based on the text."
+        }
+      ]
+    }
 
     Follow these rules strictly:
-    - Use clear section titles (no symbols, no markdown characters like *, #, or ---)
+    - Use clear section titles in the answer (no symbols, no markdown characters like *, #, or ---)
     - Explain concepts from beginner level to slightly advanced level
     - Include short and relevant code examples only where necessary
     - Use simple language and direct explanations
     - Keep the response well-organized and readable
-    - End with a short summary and key takeaways
+    - End the answer with a short summary and key takeaways
     - Do not repeat content unnecessarily
     - Do not invent information outside the document
+    - Output ONLY valid JSON, starting with { and ending with }
 
     Recent conversation context:
-    ${historyText}
+    \${historyText}
 
     Document content to use as the ONLY source:
-    ${context.substring(0, 18000)}
+    \${context.substring(0, 18000)}
 
     User question:
-    ${question}
+    \${question}
 
-    Now write a clean, structured explanation that directly answers the user's question based only on the document.
+    Now write the clean, structured JSON object as requested.
     `;
 
         const client = getAiClient();
@@ -182,10 +197,20 @@ router.post("/", clerkAuth, async (req, res) => {
           model: "llama-3.1-8b-instant",
           messages: [{ role: "user", content: finalPrompt }],
           temperature: 0.3,
-          max_tokens: 6000
+          max_tokens: 6000,
+          response_format: { type: "json_object" }
         });
 
-    const answer = completion.choices[0].message.content;
+    let aiResponse;
+    try {
+      aiResponse = JSON.parse(completion.choices[0].message.content);
+    } catch (parseError) {
+      console.error("JSON parsing error:", parseError);
+      aiResponse = { answer: completion.choices[0].message.content, gaps: [] };
+    }
+
+    const answer = aiResponse.answer || "No logical answer generated.";
+    const gaps = aiResponse.gaps || [];
 
     await supabase.from('messages').insert([
       { chat_id: chatId, role: 'user', content: question },
@@ -217,6 +242,7 @@ router.post("/", clerkAuth, async (req, res) => {
     res.json({
       chatId,
       answer,
+      gaps,
       page: hits[0]?.payload?.page || 1,
       sources: hits.slice(0, 5).map(h => ({
         page: h.payload.page,
@@ -295,5 +321,57 @@ router.get("/:chatId/messages", clerkAuth, async (req, res) => {
     res.status(500).json({ error: "Failed to load messages" });
   }
 });
+
+router.get('/:id/pdfs', clerkAuth, async (req, res) => {
+  try {
+    const chatId = req.params.id;
+
+    if (!chatId) {
+      return res.status(400).json({ error: 'Chat ID is required' });
+    }
+
+    // 🔐 Get user from Clerk middleware (assumed you already have this)
+    const clerkId = req.auth?.userId;
+    if (!clerkId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    // ✅ Step 1: Verify chat belongs to user
+    const { data: chat, error: chatError } = await supabase
+      .from('chats')
+      .select('id, workspace_id, clerk_id')
+      .eq('id', chatId)
+      .single();
+
+    if (chatError || !chat) {
+      return res.status(404).json({ error: 'Chat not found' });
+    }
+
+    if (chat.clerk_id !== clerkId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // ✅ Step 2: Fetch PDFs linked to this chat's workspace
+    const { data: pdfs, error: pdfError } = await supabase
+      .from('user_pdfs')
+      .select('pdf_id, filename, storage_path, workspace_id, uploaded_at')
+      .eq('workspace_id', chat.workspace_id);
+
+    if (pdfError) {
+      console.error('❌ PDF fetch error:', pdfError);
+      return res.status(500).json({ error: 'Failed to fetch PDFs' });
+    }
+
+    return res.json(pdfs);
+
+  } catch (err) {
+    console.error('🔥 GET /chat/:id/pdfs error:', err);
+    return res.status(500).json({
+      error: 'Internal server error',
+      details: err.message
+    });
+  }
+});
+
 
 export default router;

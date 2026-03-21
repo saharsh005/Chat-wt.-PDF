@@ -89,7 +89,15 @@ app.get("/", (req, res) => {
   res.json({ status: "Backend running 🚀" });
 });
 
-// ✅ 8. Start server
+// ✅ 8. Global Error Handler (Forces JSON responses over HTML)
+app.use((err, req, res, next) => {
+  console.error("Global error handler:", err.message);
+  res.status(err.status || 500).json({
+    error: err.message || "Internal Server Error"
+  });
+});
+
+// ✅ 9. Start server
 app.listen(5000, () => {
   console.log("Server running on http://localhost:5000");
 });
