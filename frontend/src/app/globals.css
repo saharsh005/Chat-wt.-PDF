@@ -2,6 +2,47 @@
 @tailwind components;
 @tailwind utilities;
 
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #0d0d0d;
+  color: #e8e8e8;
+  height: 100%;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* Markdown Content Styling */
+.markdown-content h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 1.2rem 0 0.6rem;
+  color: #4f8ef7;
+}
+
+.markdown-content h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1rem 0 0.5rem;
+}
+
+.markdown-content p {
+  margin: 0.8rem 0;
+  line-height: 1.6;
+}
+
+.markdown-content strong {
+  font-weight: 600;
+  color: inherit;
+}
+
+.markdown-content ul, .markdown-content ol {
+  margin: 0.8rem 0;
+  padding-left: 1.5rem;
+}
+
+.markdown-content li {
+  margin: 0.4rem 0;
 }

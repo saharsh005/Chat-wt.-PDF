@@ -246,4 +246,75 @@ router.get("/:id/research-gaps", clerkAuth, async (req, res) => {
   }
 });
 
+/* =========================
+   GENERATE ABSTRACT FOR GAP
+========================= */
+router.post("/:id/generate-abstract", clerkAuth, async (req, res) => {
+  try {
+    const workspaceId = req.params.id;
+    const userId = req.auth.userId;
+    const { gapTitle, gapDescription } = req.body;
+
+    if (!gapTitle) return res.status(400).json({ error: "Gap title is required" });
+
+    // Verify workspace belongs to user
+    const { data: ws, error: wsErr } = await supabase
+      .from('workspaces')
+      .select('id')
+      .eq('id', workspaceId)
+      .eq('clerk_id', userId)
+      .single();
+
+    if (wsErr || !ws) return res.status(404).json({ error: "Workspace not found" });
+
+    // 1. Get chunks from Qdrant for context
+    const collectionName = `pdfs_${userId}`;
+    const { points: chunks } = await qdrant.scroll(collectionName, {
+      filter: {
+        must: [
+          { key: "workspaceId", match: { value: workspaceId } }
+        ]
+      },
+      limit: 40,
+      with_payload: true
+    });
+
+    const contextText = chunks.map(c => c.payload.text).join('\n\n---\n\n');
+
+    // 2. Call LLM to generate abstract
+    const prompt = `
+    You are an expert academic researcher. Based on the provided context from research documents and a specific research gap, generate a detailed research abstract.
+    
+    RESEARCH GAP TITLE: ${gapTitle}
+    RESEARCH GAP DESCRIPTION: ${gapDescription || "N/A"}
+    
+    WORKSPACE CONTEXT (Relevant excerpts from existing documents):
+    ${contextText.substring(0, 12000)}
+    
+    The abstract should:
+    1. Define the problem and why the identified gap matters.
+    2. Propose a potential research objective or methodology to address this gap.
+    3. Describe the expected contribution to the field.
+    4. Provide context on how it relates to the existing documents in the workspace.
+    
+    Keep it professional, academic, and around 250-400 words.
+    `;
+
+    const client = getAiClient();
+    const completion = await client.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.5,
+      max_tokens: 1500
+    });
+
+    const abstract = completion.choices[0].message.content;
+    res.json({ abstract });
+
+  } catch (err) {
+    console.error("Abstract generation error:", err);
+    res.status(500).json({ error: 'Failed to generate abstract' });
+  }
+});
+
 export default router;

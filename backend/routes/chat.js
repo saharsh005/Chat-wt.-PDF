@@ -92,11 +92,11 @@ router.post("/", clerkAuth, async (req, res) => {
 
     const collectionName = `pdfs_${userId}`;
     const queryVector = await getEmbedding(question);
-
-    // 🔍 SMART SEARCH: Try exact pdfId FIRST, fallback to best chunks
+    
+    // 🔍 SEARCH: Get more chunks for broader context across multiple PDFs
     let hits = await qdrant.search(collectionName, {
       vector: queryVector,
-      limit: 3,
+      limit: 8, // Increased from 3
       with_payload: true,
       filter: {
         must: [
@@ -105,43 +105,7 @@ router.post("/", clerkAuth, async (req, res) => {
       }
     });
 
-    console.log("📊 Exact pdfId chunks:", hits.length);
-
-    // FALLBACK: If no exact match, use BEST chunks regardless of pdfId
-    // if (!hits.length) {
-    //   console.log("⚠️ No chunks for pdfId, using best matches...");
-    //   hits = await qdrant.search(collectionName, {
-    //     vector: queryVector,
-    //     limit: 3,
-    //     with_payload: true
-    //   });
-    //   console.log("📊 Fallback chunks:", hits.length);
-    // }
-
-    if (!hits.length) {
-      const answer = "No content found in your documents. Please upload a new PDF.";
-      await supabase.from('messages').insert([
-        { chat_id: chatId, role: 'user', content: question },
-        { chat_id: chatId, role: 'assistant', content: answer }
-      ]);
-      return res.json({ chatId, answer, sources: [], chunkCount: 0 });
-    }
-
-    // 🔎 Extract page numbers from retrieved chunks
-    const pagesUsed = [
-      ...new Set(
-        hits
-          .map(h => h.payload?.page)
-          .filter(p => p !== undefined && p !== null)
-      )
-    ].sort((a, b) => a - b);
-
-    // 🖨 Console log page numbers
-    if (pagesUsed.length) {
-      console.log(`📄 Answer derived from pages: ${pagesUsed.join(", ")}`);
-    } else {
-      console.log("📄 No page metadata available in retrieved chunks");
-    }
+    console.log("📊 Workspace chunks found:", hits.length);
 
     // Build context
     const context = hits.map(h => h.payload.text).join("\n\n---\n\n");
@@ -152,14 +116,17 @@ router.post("/", clerkAuth, async (req, res) => {
     Your task is to explain the user's question using ONLY the information present in the provided document content.
     Do NOT use any external knowledge.
 
-    Use a clear, simple, and structured explanation that is easy to understand.
-    The response should be moderately detailed, not overly long, and not too brief.
-    
-    ALSO, identify 1-3 research gaps mentioned or implied in the text related to the user's question (e.g., Methodological Gap, Theoretical Gap, Empirical Gap, System Architecture Gap, etc.).
+    ### Response Guidelines:
+    1. **Structure**: Use clear Markdown headers (e.g., ### Section, #### Subsection) to organize your thoughts.
+    2. **Readability**: Break your answer into clear, digestible paragraphs. Avoid long walls of text.
+    3. **Emphasis**: Use **bold text** for important terms, concepts, or key findings.
+    4. **Tone**: Maintain a professional, academic yet accessible tone, similar to a high-quality research assistant or ChatGPT.
+    5. **Clarity**: Explain concepts from a foundational level to more advanced insights.
+    6. **JSON Format**: You MUST respond in valid JSON format exactly matching the structure below.
 
-    You MUST respond in valid JSON format exactly matching this structure:
+    ### JSON Structure:
     {
-      "answer": "Your detailed explanation string here, using markdown formatting as needed...",
+      "answer": "Your detailed explanation string here, heavily using Markdown for structure, bolding, and spacing...",
       "gaps": [
         {
           "type": "METHODOLOGICAL GAP",
@@ -170,36 +137,31 @@ router.post("/", clerkAuth, async (req, res) => {
     }
 
     Follow these rules strictly:
-    - Use clear section titles in the answer (no symbols, no markdown characters like *, #, or ---)
-    - Explain concepts from beginner level to slightly advanced level
-    - Include short and relevant code examples only where necessary
-    - Use simple language and direct explanations
-    - Keep the response well-organized and readable
-    - End the answer with a short summary and key takeaways
-    - Do not repeat content unnecessarily
-    - Do not invent information outside the document
-    - Output ONLY valid JSON, starting with { and ending with }
+    - Include short and relevant code examples ONLY if directly present in the text and necessary.
+    - End the answer with a "### Summary and Key Takeaways" section.
+    - Do not invent information outside the document.
+    - Output ONLY valid JSON, starting with { and ending with }.
 
     Recent conversation context:
-    \${historyText}
+    ${historyText}
 
     Document content to use as the ONLY source:
-    \${context.substring(0, 18000)}
+    ${context.substring(0, 18000)}
 
     User question:
-    \${question}
+    ${question}
 
-    Now write the clean, structured JSON object as requested.
+    Now write the clean, structured, and beautifully formatted JSON object as requested.
     `;
 
-        const client = getAiClient();
-        const completion = await client.chat.completions.create({
-          model: "llama-3.1-8b-instant",
-          messages: [{ role: "user", content: finalPrompt }],
-          temperature: 0.3,
-          max_tokens: 6000,
-          response_format: { type: "json_object" }
-        });
+    const client = getAiClient();
+    const completion = await client.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      messages: [{ role: "user", content: finalPrompt }],
+      temperature: 0.3,
+      max_tokens: 6000,
+      response_format: { type: "json_object" }
+    });
 
     let aiResponse;
     try {
@@ -239,17 +201,32 @@ router.post("/", clerkAuth, async (req, res) => {
     .eq("id", chatId);
 
 
+    // 🎯 REFINED SOURCES: Filter by score + De-duplicate by (pdfId, page)
+    const uniqueSources = [];
+    const sourceKeys = new Set();
+
+    for (const h of hits) {
+      if (h.score < 0.35) continue; // Skip low-confidence matches
+
+      const key = `${h.payload.pdfId}_${h.payload.page}`;
+      if (!sourceKeys.has(key)) {
+        sourceKeys.add(key);
+        uniqueSources.push({
+          page: h.payload.page,
+          pdfId: h.payload.pdfId,
+          score: Math.round(h.score * 100),
+          preview: h.payload.text.substring(0, 100) + "..."
+        });
+      }
+      if (uniqueSources.length >= 5) break; // Limit to 5 diverse sources
+    }
+
     res.json({
       chatId,
       answer,
       gaps,
-      page: hits[0]?.payload?.page || 1,
-      sources: hits.slice(0, 5).map(h => ({
-        page: h.payload.page,
-        pdfId: h.payload.pdfId,
-        score: Math.round(h.score * 100),
-        preview: h.payload.text.substring(0, 100) + "..."
-      })),
+      page: uniqueSources[0]?.page || 1,
+      sources: uniqueSources,
       chunkCount: hits.length
     });
 
