@@ -217,6 +217,31 @@ export default function WorkspaceChatPage() {
     router.push(`/workspace/${workspaceId}/chat/${data.id}`);
   };
 
+  const deleteChat = async (e, id) => {
+    e.stopPropagation();
+    if (!confirm('Delete this chat and all its messages?')) return;
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API}/chat/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const updated = workspaceChats.filter(c => c.id !== id);
+        setWsChats(updated);
+        if (chatId === String(id)) {
+          if (updated.length > 0) {
+            router.push(`/workspace/${workspaceId}/chat/${updated[0].id}`);
+          } else {
+            router.push(`/workspace/${workspaceId}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Delete chat error:', err);
+    }
+  };
+
   // ── Citation click → jump PDF page ───────────────────────────────────────
   const jumpToSource = src => {
     const pdf = workspacePdfs.find(p => p.pdf_id === src.pdfId);
@@ -297,7 +322,7 @@ export default function WorkspaceChatPage() {
         <div style={{ width: `${leftPct}%`, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: `1px solid ${t.border}`, overflow: 'hidden' }}>
 
           {/* PDF tabs */}
-          <div style={{ display: 'flex', alignItems: 'center', height: 38, borderBottom: `1px solid ${t.border}`, background: t.bgAlt, overflowX: 'auto', flexShrink: 0 }}>
+          <div className="premium-slider" style={{ display: 'flex', alignItems: 'center', height: 38, borderBottom: `1px solid ${t.border}`, background: t.bgAlt, overflowX: 'auto', flexShrink: 0 }}>
             {workspacePdfs.filter(p => !closedPdfIds.has(p.pdf_id)).map(pdf => {
               const active = activePdf?.pdf_id === pdf.pdf_id;
               return (
@@ -344,7 +369,7 @@ export default function WorkspaceChatPage() {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
 
           {/* Chat tabs */}
-          <div style={{ display: 'flex', alignItems: 'center', height: 38, borderBottom: `1px solid ${t.border}`, background: t.bgAlt, overflowX: 'auto', flexShrink: 0 }}>
+          <div className="premium-slider" style={{ display: 'flex', alignItems: 'center', height: 38, borderBottom: `1px solid ${t.border}`, background: t.bgAlt, overflowX: 'auto', flexShrink: 0 }}>
             {workspaceChats.map(chat => {
               const active = chatId === String(chat.id);
               return (
@@ -356,6 +381,10 @@ export default function WorkspaceChatPage() {
                   }}>
                   <MessageSquare size={11} style={{ color: active ? t.accent : t.textMuted, flexShrink: 0 }} />
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{chat.title || 'Chat'}</span>
+                  <X size={9} style={{ marginLeft: 3, flexShrink: 0, color: t.textMuted, cursor: 'pointer' }}
+                    onClick={e => deleteChat(e, chat.id)}
+                    onMouseEnter={e => e.target.style.color = '#e85d5d'}
+                    onMouseLeave={e => e.target.style.color = t.textMuted} />
                 </div>
               );
             })}

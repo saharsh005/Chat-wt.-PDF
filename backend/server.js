@@ -23,7 +23,6 @@ app.use(cors({
 // Routes
 import upload from "./routes/upload.js";
 import chat from "./routes/chat.js";
-import quiz from "./routes/quiz.js";
 import pdfRoutes from "./routes/pdf.js";
 import workspaceRoutes from "./routes/workspace.js";
 import { clerkAuth } from "./middleware/auth.js";
@@ -31,7 +30,6 @@ import { clerkAuth } from "./middleware/auth.js";
 app.use("/workspace", workspaceRoutes);
 app.use("/pdf", pdfRoutes);
 app.use("/chat", chat);
-app.use("/quiz", clerkAuth, quiz);
 app.use("/upload", clerkAuth, upload);
 
 app.get("/health", (req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));

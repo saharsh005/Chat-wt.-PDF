@@ -358,4 +358,27 @@ router.get("/:id/pdfs", clerkAuth, async (req, res) => {
   }
 });
 
+router.delete("/:chatId", clerkAuth, async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const userId = req.auth.userId;
+
+    // 1. Check ownership
+    const { data: chat, error: chatErr } = await supabase
+      .from("chats").select("clerk_id").eq("id", chatId).single();
+    
+    if (chatErr || !chat) return res.status(404).json({ error: "Chat not found" });
+    if (chat.clerk_id !== userId) return res.status(403).json({ error: "Forbidden" });
+
+    // 2. Delete chat (cascades to messages in DB if FK is set)
+    const { error: delErr } = await supabase
+      .from("chats").delete().eq("id", chatId);
+    
+    if (delErr) throw delErr;
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete chat" });
+  }
+});
+
 export default router;

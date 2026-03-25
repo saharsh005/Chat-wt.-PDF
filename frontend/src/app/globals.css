@@ -12,12 +12,19 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── Scrollbars ── */
-* { scrollbar-width: thin; scrollbar-color: #252525 transparent; }
-::-webkit-scrollbar { width: 4px; height: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #252525; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #333; }
+/* ── Sleek Slider ── */
+.premium-slider {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.15) transparent;
+}
+.premium-slider::-webkit-scrollbar { height: 1px; }
+.premium-slider::-webkit-scrollbar-track { background: transparent; }
+.premium-slider::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 10px; }
+.premium-slider::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* ── Markdown ── */
 .md h1, .md h2, .md h3 { font-weight: 600; margin: 1rem 0 0.5rem; color: inherit; }
