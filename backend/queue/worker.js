@@ -1,278 +1,206 @@
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.join(__dirname, "../.env") });
+
 import { Worker } from "bullmq";
-import pdf from "pdf-parse";
+import pdf from "pdf-parse/lib/pdf-parse.js";
 import { v4 as uuidv4 } from "uuid";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { getEmbedding } from "../utils/embeddings.js";
 import { supabase } from "../utils/supabase.js";
 
-// ---------------- CONFIG ----------------
+// ─── Config ───────────────────────────────────────────────
 const REDIS_CONNECTION = {
-  host: "localhost",
-  port: 6379,
+  host: process.env.REDIS_HOST || "localhost",
+  port: parseInt(process.env.REDIS_PORT || "6379"),
+  maxRetriesPerRequest: null,
 };
 
-const sleep = (ms) => new Promise(res => setTimeout(res, ms));
-
-const QDRANT_URL = "http://localhost:6333";
+const QDRANT_URL = process.env.QDRANT_URL || "http://localhost:6333";
 const VECTOR_SIZE = 384;
 const CHUNK_SIZE = 800;
 const BATCH_SIZE = 15;
-const SIMILARITY_DISTANCE = "Cosine";
-// ----------------------------------------
 
-const qdrant = new QdrantClient({
-  url: QDRANT_URL,
-  timeout: 60_000,
-});
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
-console.log("🚀 Research Paper Worker v2 running...");
+const qdrant = new QdrantClient({ url: QDRANT_URL, timeout: 60_000 });
 
-// ---------- HELPERS ----------
-async function ensureCollection(collectionName) {
+// ─── Qdrant Collection Setup ──────────────────────────────
+async function ensureCollection(name) {
   try {
-    await qdrant.createCollection(collectionName, {
-      vectors: {
-        size: VECTOR_SIZE,
-        distance: SIMILARITY_DISTANCE,
-      },
+    await qdrant.createCollection(name, {
+      vectors: { size: VECTOR_SIZE, distance: "Cosine" },
     });
-    console.log("✅ Created collection:", collectionName);
+    console.log("✅ Created collection:", name);
   } catch (err) {
     if (err.status === 409) {
-      console.log("ℹ️ Collection exists:", collectionName);
+      console.log("ℹ️ Collection already exists:", name);
     } else {
       throw err;
     }
   }
 }
 
-// 🔥 REPLACE ENTIRE extractSections() + chunkText() + chunking logic
-
-// ========== HEADING DETECTOR v3 ==========
+// ─── Section Heading Detector ─────────────────────────────
 function isLikelyHeading(line) {
   if (!line) return false;
-  
-  const trimmed = line.trim();
-  
-  // ❌ REJECT: Too short/long, journal headers, equations
-  if (trimmed.length < 12 || trimmed.length > 70) return false;
-  
-  // ❌ Journal/page numbers (IJISS, Vol, page nums)
-  if (/IJISS|Vol\.\d+|No\.\d+|Page|October|247|249|251|257/i.test(trimmed)) return false;
-  
-  // ❌ Math/equations/symbols
-  if (/[∑∫∂∇≠≤≥√πμστφθλρψωαβγδεζη×÷±∞]|[(][a-zA-Z0-9]{1,3}[)]/.test(trimmed)) return false;
-  
-  // ❌ Pure symbols/numbers
-  if (/^[=+\-*/<>\[\]{}()×÷±∞\d.,]+$/.test(trimmed)) return false;
-  
-  // ✅ ACCEPT: Roman numerals + Title case
-  if (/^(I{0,4}|V?I{0,3})\.\s+[A-Z][a-z]/.test(trimmed)) return true;
-  
-  // ✅ Numbered sections: "3.1 Choosing...", "4.2 Enhanced..."
-  if (/^\d+\.\d+\s+[A-Z][a-z]/.test(trimmed)) return true;
-  
-  // ✅ ALL CAPS titles (min length)
-  if (trimmed === trimmed.toUpperCase() && trimmed.length >= 20) return true;
-  
+  const t = line.trim();
+  if (t.length < 12 || t.length > 70) return false;
+  if (/IJISS|Vol\.\d+|No\.\d+|Page|October/i.test(t)) return false;
+  if (/[∑∫∂∇≠≤≥√πμστφθλρψωαβγδεζη×÷±∞]/.test(t)) return false;
+  if (/^[=+\-*\/<>\[\]{}()×÷±∞\d.,]+$/.test(t)) return false;
+  if (/^(I{0,4}|V?I{0,3})\.\s+[A-Z][a-z]/.test(t)) return true;
+  if (/^\d+\.\d+\s+[A-Z][a-z]/.test(t)) return true;
+  if (t === t.toUpperCase() && t.length >= 20) return true;
   return false;
 }
 
-// ========== SECTIONS v3 ==========
+// ─── Section Extractor ────────────────────────────────────
 function extractSections(fullText) {
-  const lines = fullText
-    .split('\n')
-    .map(l => l.trim())
-    .filter(l => l.length > 10);
-
+  const lines = fullText.split("\n").map((l) => l.trim()).filter((l) => l.length > 10);
   const sections = [];
-  let currentSection = { title: "Document", content: [], page: 1 };
-  
+  let current = { title: "Document", content: [], page: 1 };
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    
     if (isLikelyHeading(line)) {
-      if (currentSection.content.length > 5) {
-        sections.push(currentSection);
-      }
-      currentSection = {
-        title: line,
-        content: [],
-        page: Math.floor(i / 60) + 1
-      };
-    } else {
-      // Accept most content lines (lenient)
-      if (line.length > 15 && !line.match(/^[××=+\-*/()]+$/) && 
-          !/Vol\.\d+|IJISS|Page \d+/i.test(line)) {
-        currentSection.content.push(line);
-      }
+      if (current.content.length > 5) sections.push(current);
+      current = { title: line, content: [], page: Math.floor(i / 60) + 1 };
+    } else if (line.length > 15 && !/Vol\.\d+|IJISS|Page \d+/i.test(line)) {
+      current.content.push(line);
     }
   }
-  
-  if (currentSection.content.length > 5) sections.push(currentSection);
-  
-  // Fallback: If too few sections, split by pages (~1000 chars/page)
+  if (current.content.length > 5) sections.push(current);
+
   if (sections.length < 3) {
-    console.log("⚠️ Few sections, using PAGE-WISE fallback");
     const pageSize = 1200;
-    const pages = [];
-    for (let i = 0; i < fullText.length; i += pageSize) {
-      pages.push({
-        title: `Page ${Math.floor(i/pageSize) + 1}`,
-        content: [fullText.slice(i, i + pageSize).trim()],
-        page: Math.floor(i/pageSize) + 1
-      });
-    }
-    return pages.slice(0, 12); // Max 12 pages
+    return Array.from({ length: Math.ceil(fullText.length / pageSize) }, (_, i) => ({
+      title: `Page ${i + 1}`,
+      content: [fullText.slice(i * pageSize, (i + 1) * pageSize).trim()],
+      page: i + 1,
+    })).slice(0, 12);
   }
-  
-  return sections.filter(s => s.content.length > 8);
+
+  return sections.filter((s) => s.content.length > 8);
 }
 
-// ========== CHUNKING v3 (Aggressive cleaning + guaranteed chunks) ==========
-function chunkText(rawSectionText, size = 900) {
-  // 1️⃣ HEAVY CLEANING
-  let cleaned = rawSectionText
-    .replace(/IJISS Vol\.\d+ No\.\d+ October-December \d+/gi, '') // Journal headers
-    .replace(/247|249|251|257\s+IJISS/gi, '') // Page numbers
-    .replace(/×100\s*\([^)]*\)/gi, '') // Equation fragments
-    .replace(/\[Eq\.\s*\d+\]/gi, '') // Eq labels
-    .replace(/\s+/g, ' ')
+// ─── Text Chunker ─────────────────────────────────────────
+function chunkText(raw, size = CHUNK_SIZE) {
+  const cleaned = raw
+    .replace(/IJISS Vol\.\d+ No\.\d+ October-December \d+/gi, "")
+    .replace(/\s+/g, " ")
     .trim();
 
-  // 2️⃣ Split into sentences
-  const sentences = cleaned.split(/[.!?]+/).filter(s => s.trim().length > 30);
-  
+  const sentences = cleaned.split(/[.!?]+/).filter((s) => s.trim().length > 30);
   const chunks = [];
-  let currentChunk = '';
-  
-  for (const sentence of sentences) {
-    if ((currentChunk + sentence).length > size) {
-      if (currentChunk.length > 200) {
-        chunks.push(currentChunk.trim());
-      }
-      currentChunk = sentence + '. ';
+  let current = "";
+
+  for (const s of sentences) {
+    if ((current + s).length > size && current.length > 200) {
+      chunks.push(current.trim());
+      current = s + ". ";
     } else {
-      currentChunk += sentence + '. ';
+      current += s + ". ";
     }
   }
-  
-  if (currentChunk.length > 200) chunks.push(currentChunk.trim());
-  
-  // 3️⃣ FINAL FILTER (strict quality check)
-  return chunks.filter(chunk => 
-    chunk.length > 250 &&
-    !/^[××=+\-*/()×÷]+$/.test(chunk) &&
-    !/Vol\.\d+|IJISS|Page \d+/i.test(chunk) &&
-    !chunk.match(/^[×∑∫∂∇≠≤≥√πμσ]/)
+  if (current.length > 200) chunks.push(current.trim());
+
+  return chunks.filter(
+    (c) =>
+      c.length > 250 &&
+      !/Vol\.\d+|IJISS|Page \d+/i.test(c) &&
+      !c.match(/^[×∑∫∂∇≠≤≥√πμσ]/)
   );
 }
 
-
+// ─── Main Worker ──────────────────────────────────────────
 new Worker(
   "pdf-queue",
   async (job) => {
     const { pdfId, storagePath, userId, workspaceId } = job.data;
 
-    try {
-      console.log("➡️ Processing Research PDF:", pdfId);
+    console.log("➡️ Processing PDF:", pdfId);
 
-      if (!storagePath) {
-        throw new Error("No storagePath provided in job data");
+    if (!storagePath) throw new Error("No storagePath in job data");
+
+    const { data: fileData, error: dlErr } = await supabase.storage
+      .from("pdfs")
+      .download(storagePath);
+
+    if (dlErr) throw new Error("Download failed: " + dlErr.message);
+
+    const buffer = Buffer.from(await fileData.arrayBuffer());
+    const parsed = await pdf(buffer);
+    const fullText = parsed.text;
+
+    console.log("📑 Pages:", parsed.numpages, "| Text length:", fullText.length);
+
+    const sections = extractSections(fullText);
+    console.log("📚 Sections:", sections.length);
+
+    const chunks = [];
+    let chunkCounter = 0;
+
+    for (const section of sections) {
+      const text = section.content.join(" ").trim();
+      if (text.length < 100) continue;
+      const sectionChunks = chunkText(text);
+      for (const chunk of sectionChunks) {
+        chunks.push({
+          text: chunk,
+          page: section.page,
+          section: section.title.substring(0, 100),
+          chunkIndex: chunkCounter++,
+        });
       }
-
-      // 1️⃣ Download PDF from Supabase
-      const { data: fileData, error: downloadError } = await supabase.storage
-        .from("pdfs")
-        .download(storagePath);
-
-      if (downloadError) {
-        throw new Error("Failed to download PDF: " + downloadError.message);
-      }
-
-      const fileBuffer = Buffer.from(await fileData.arrayBuffer());
-
-      // 🔥 2️⃣ Use YOUR ORIGINAL pdf-parse (works perfectly)
-      const data = await pdf(fileBuffer);
-      const fullText = data.text;
-
-      console.log("📑 Total pages:", data.numpages);
-      console.log("📝 Total text length:", fullText.length);
-
-      // 🔥 3️⃣ NEW: Smart section extraction
-      const sections = extractSections(fullText);
-      console.log("📚 Sections found:", sections.length);
-
-      let chunks = [];
-      let chunkCounter = 0;
-
-      // 4️⃣ Chunk per section
-      for (let section of sections) {
-        const sectionText = section.content.join(' ').trim();
-        if (sectionText.length < 100) continue;
-
-        const sectionChunks = chunkText(sectionText, CHUNK_SIZE);
-        
-        for (const chunk of sectionChunks) {
-          chunks.push({
-            text: chunk,
-            page: section.page,
-            section: section.title.substring(0, 100),
-            chunkIndex: chunkCounter++
-          });
-        }
-        console.log(`   └─ ${section.title}: ${sectionChunks.length} chunks`);
-      }
-
-      console.log("✅ Total chunks:", chunks.length);
-
-      // 5️⃣ Store (unchanged)
-      const collectionName = `pdfs_${userId}`;
-      await ensureCollection(collectionName);
-
-      for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-        const batch = chunks.slice(i, i + BATCH_SIZE);
-        let retryCount = 0;
-        const maxRetries = 3;
-
-        while (retryCount < maxRetries) {
-          try {
-            const points = [];
-            for (let chunkObj of batch) {
-              const vector = await getEmbedding(chunkObj.text);
-                points.push({
-                  id: uuidv4(),
-                  vector,
-                  payload: {
-                    pdfId,
-                    userId,
-                    workspaceId,   // 🔥 ADD THIS
-                    text: chunkObj.text,
-                    page: chunkObj.page,
-                    section: chunkObj.section,
-                    chunkIndex: chunkObj.chunkIndex,
-                    createdAt: new Date().toISOString(),
-                  },
-                });
-            }
-            await qdrant.upsert(collectionName, { points });
-            console.log(`📦 Batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(chunks.length / BATCH_SIZE)} ✅`);
-            break;
-          } catch (err) {
-            retryCount++;
-            if (retryCount >= maxRetries) throw err;
-            await sleep(1000 * retryCount);
-          }
-        }
-        await sleep(400);
-      }
-
-      console.log("✅ Finished Research PDF processing:", pdfId);
-
-    } catch (err) {
-      console.error("❌ Worker failed:", err.message);
-      throw err;
     }
+
+    console.log("✅ Total chunks:", chunks.length);
+
+    const collectionName = `pdfs_${userId}`;
+    await ensureCollection(collectionName);
+
+    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+      const batch = chunks.slice(i, i + BATCH_SIZE);
+      let retries = 0;
+
+      while (retries < 3) {
+        try {
+          const points = await Promise.all(
+            batch.map(async (c) => ({
+              id: uuidv4(),
+              vector: await getEmbedding(c.text),
+              payload: {
+                pdfId,
+                userId,
+                workspaceId,
+                text: c.text,
+                page: c.page,
+                section: c.section,
+                chunkIndex: c.chunkIndex,
+                createdAt: new Date().toISOString(),
+              },
+            }))
+          );
+          await qdrant.upsert(collectionName, { points });
+          console.log(`📦 Batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(chunks.length / BATCH_SIZE)} ✅`);
+          break;
+        } catch (err) {
+          retries++;
+          if (retries >= 3) throw err;
+          await sleep(1000 * retries);
+        }
+      }
+      await sleep(300);
+    }
+
+    console.log("✅ Done processing:", pdfId);
   },
   { connection: REDIS_CONNECTION, concurrency: 1 }
 );
+
+console.log("🚀 Radium PDF Worker running...");

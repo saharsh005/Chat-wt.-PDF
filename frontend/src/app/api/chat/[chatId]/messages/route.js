@@ -1,34 +1,14 @@
-import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+// This route proxies message fetching from the backend.
+// It's kept minimal — the main chat logic lives in the backend.
+export async function GET(request, { params }) {
+  const { chatId } = params;
+  const authHeader = request.headers.get('Authorization');
 
-export async function GET(req, { params }) {
-  try {
-    const { userId } = auth();
+  const res = await fetch(
+    `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000'}/chat/${chatId}/messages`,
+    { headers: { Authorization: authHeader } }
+  );
 
-    if (!userId) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
-
-    const { chatId } = params;
-
-    // TODO: Replace with your real DB query
-    // Example:
-    // const messages = await db.message.findMany({
-    //   where: { chatId },
-    //   orderBy: { createdAt: "asc" },
-    // });
-
-    const messages = []; // temporary
-
-    return NextResponse.json(messages);
-  } catch (error) {
-    console.error("GET messages error:", error);
-    return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
-    );
-  }
+  const data = await res.json();
+  return Response.json(data, { status: res.status });
 }

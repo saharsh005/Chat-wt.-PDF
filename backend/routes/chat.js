@@ -4,351 +4,358 @@ import { QdrantClient } from "@qdrant/js-client-rest";
 import { getEmbedding } from "../utils/embeddings.js";
 import { clerkAuth } from "../middleware/auth.js";
 import { supabase } from "../utils/supabase.js";
+import { buildRagPrompt } from "../rag/prompts.js";
 
 const router = express.Router();
+const qdrant = new QdrantClient({ url: process.env.QDRANT_URL || "http://localhost:6333" });
 
 let ai = null;
-function getAiClient() {
-  if (!ai) {
-    ai = new Groq({ 
-      apiKey: process.env.GROQ_API_KEY
-    });
-  }
+function getAi() {
+  if (!ai) ai = new Groq({ apiKey: process.env.GROQ_API_KEY });
   return ai;
 }
 
-const qdrant = new QdrantClient({
-  url: "http://localhost:6333",
-});
+// ── Helpers ────────────────────────────────────────────────────────────────
 
-// ADD THIS NEW ROUTE
-router.post('/create', clerkAuth, async (req, res) => {
+async function getWorkspacePdfs(workspaceId) {
+  const { data, error } = await supabase
+    .from("user_pdfs")
+    .select("pdf_id, filename, storage_path")
+    .eq("workspace_id", workspaceId);
+  if (error) { console.error("Workspace PDF fetch error:", error); return []; }
+  return data || [];
+}
+
+function buildContext(hits, workspacePdfs) {
+  const grouped = {};
+  for (const h of hits) {
+    const meta = workspacePdfs.find(p => p.pdf_id === h.payload.pdfId);
+    const key = meta?.filename || h.payload.pdfId;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(`[Page ${h.payload.page} | ${h.payload.section || "N/A"}]\n${h.payload.text}`);
+  }
+  return Object.entries(grouped)
+    .map(([name, chunks]) => `\n\n===== DOCUMENT: ${name} =====\n${chunks.join("\n\n")}`)
+    .join("\n\n");
+}
+
+function buildSources(hits, workspacePdfs) {
+  const seen = new Set();
+  const sources = [];
+  for (const h of hits) {
+    const key = `${h.payload.pdfId}_${h.payload.page}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const meta = workspacePdfs.find(p => p.pdf_id === h.payload.pdfId);
+    sources.push({
+      pdfId: h.payload.pdfId,
+      filename: meta?.filename || "Document",
+      page: h.payload.page,
+      section: h.payload.section || null,
+      score: Math.round(h.score * 100),
+      preview: h.payload.text.substring(0, 120) + "…",
+    });
+    if (sources.length >= 8) break;
+  }
+  return sources;
+}
+
+// ── CREATE CHAT ─────────────────────────────────────────────────────────────
+
+router.post("/create", clerkAuth, async (req, res) => {
   try {
     const { workspaceId } = req.body;
     const userId = req.auth.userId;
+    if (!workspaceId) return res.status(400).json({ error: "workspaceId required" });
 
-    if (!workspaceId) {
-      return res.status(400).json({ error: "workspaceId is required" });
-    }
-
-    const { data: newChat, error } = await supabase
-      .from('chats')
-      .insert({
-        clerk_id: userId,
-        workspace_id: workspaceId,
-        title: "Research Chat"
-      })
-      .select('id, title, workspace_id, created_at')
+    const { data, error } = await supabase
+      .from("chats")
+      .insert({ clerk_id: userId, workspace_id: workspaceId, title: "Research Chat" })
+      .select("id, title, workspace_id, created_at")
       .single();
 
     if (error) throw error;
-
-    console.log('🆕 Created workspace chat');
-    res.json(newChat);
-
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-
+// ── PDF RAG CHAT ────────────────────────────────────────────────────────────
 
 router.post("/", clerkAuth, async (req, res) => {
   try {
     const userId = req.auth.userId;
-    const { question, chatId } = req.body; // ← NO 'let chatDbId'
+    const { question, chatId } = req.body;
 
-    console.log("🚀 Chat:", { question: question.substring(0, 50) + "...", chatId });
-
-    // 🔥 REPLACE entire validation - NO auto-create, NO chatDbId
     if (!question || !chatId) {
-      return res.status(400).json({
-        error: "Missing required fields",
-        received: { chatId, question: !!question }
-      });
+      return res.status(400).json({ error: "question and chatId are required" });
     }
 
+    // Load chat → workspace
     const { data: chatData } = await supabase
-      .from("chats")
-      .select("workspace_id")
-      .eq("id", chatId)
-      .single();
-
-    if (!chatData) {
-      return res.status(404).json({ error: "Chat not found" });
-    }
+      .from("chats").select("workspace_id").eq("id", chatId).single();
+    if (!chatData) return res.status(404).json({ error: "Chat not found" });
 
     const workspaceId = chatData.workspace_id;
+    const workspacePdfs = await getWorkspacePdfs(workspaceId);
+    const validPdfIds = workspacePdfs.map(p => p.pdf_id);
 
+    // Recent history
+    const { data: recentMsgs } = await supabase
+      .from("messages").select("role, content")
+      .eq("chat_id", chatId).order("created_at", { ascending: false }).limit(6);
+    const historyText = (recentMsgs || []).reverse()
+      .map(m => `${m.role.toUpperCase()}: ${m.content}`).join("\n");
 
-    // Use chatId directly - NO chatDbId variable needed
-    const { data: recentMessages } = await supabase
-      .from("messages")
-      .select("role, content")
-      .eq("chat_id", chatId)  // ← Use chatId directly
-      .order("created_at", { ascending: false })
-      .limit(6);
-    const historyText = recentMessages?.reverse().map(m => `${m.role.toUpperCase()}: ${m.content}`).join("\n") || "";
-
+    // Vector search
     const collectionName = `pdfs_${userId}`;
     const queryVector = await getEmbedding(question);
-    
-    // 🔍 SEARCH: Get more chunks for broader context across multiple PDFs
+
     let hits = await qdrant.search(collectionName, {
       vector: queryVector,
-      limit: 8, // Increased from 3
+      limit: 14,
       with_payload: true,
       filter: {
         must: [
-          { key: "workspaceId", match: { value: workspaceId } }
-        ]
-      }
+          { key: "workspaceId", match: { value: workspaceId } },
+          ...(validPdfIds.length > 0 ? [{ key: "pdfId", match: { any: validPdfIds } }] : []),
+        ],
+      },
     });
 
-    console.log("📊 Workspace chunks found:", hits.length);
-
-    // Build context
-    const context = hits.map(h => h.payload.text).join("\n\n---\n\n");
-
-    const finalPrompt = `
-    You are an expert technical tutor and experienced researcher.
-
-    Your task is to explain the user's question using ONLY the information present in the provided document content.
-    Do NOT use any external knowledge.
-
-    ### Response Guidelines:
-    1. **Structure**: Use clear Markdown headers (e.g., ### Section, #### Subsection) to organize your thoughts.
-    2. **Readability**: Break your answer into clear, digestible paragraphs. Avoid long walls of text.
-    3. **Emphasis**: Use **bold text** for important terms, concepts, or key findings.
-    4. **Tone**: Maintain a professional, academic yet accessible tone, similar to a high-quality research assistant or ChatGPT.
-    5. **Clarity**: Explain concepts from a foundational level to more advanced insights.
-    6. **JSON Format**: You MUST respond in valid JSON format exactly matching the structure below.
-
-    ### JSON Structure:
-    {
-      "answer": "Your detailed explanation string here, heavily using Markdown for structure, bolding, and spacing...",
-      "gaps": [
-        {
-          "type": "METHODOLOGICAL GAP",
-          "title": "Short descriptive title of the gap",
-          "description": "Detailed explanation of what the gap is and why it exists based on the text."
-        }
-      ]
+    // Diversify: ensure coverage across multiple docs
+    hits = hits.filter(h => h.score > 0.35).sort((a, b) => b.score - a.score);
+    const seenDocs = new Set();
+    const diversified = [];
+    for (const h of hits) {
+      if (!seenDocs.has(h.payload.pdfId) || diversified.length < 8) {
+        diversified.push(h);
+        seenDocs.add(h.payload.pdfId);
+      }
     }
+    hits = diversified.slice(0, 10);
 
-    Follow these rules strictly:
-    - Include short and relevant code examples ONLY if directly present in the text and necessary.
-    - End the answer with a "### Summary and Key Takeaways" section.
-    - Do not invent information outside the document.
-    - Output ONLY valid JSON, starting with { and ending with }.
+    const context = buildContext(hits, workspacePdfs);
+    const sources = buildSources(hits, workspacePdfs);
 
-    Recent conversation context:
-    ${historyText}
-
-    Document content to use as the ONLY source:
-    ${context.substring(0, 18000)}
-
-    User question:
-    ${question}
-
-    Now write the clean, structured, and beautifully formatted JSON object as requested.
-    `;
-
-    const client = getAiClient();
-    const completion = await client.chat.completions.create({
+    // LLM
+    const prompt = buildRagPrompt(context, historyText, question);
+    const completion = await getAi().chat.completions.create({
       model: "llama-3.1-8b-instant",
-      messages: [{ role: "user", content: finalPrompt }],
+      messages: [{ role: "user", content: prompt }],
       temperature: 0.3,
       max_tokens: 6000,
-      response_format: { type: "json_object" }
+      response_format: { type: "json_object" },
     });
 
-    let aiResponse;
+    let parsed;
     try {
-      aiResponse = JSON.parse(completion.choices[0].message.content);
-    } catch (parseError) {
-      console.error("JSON parsing error:", parseError);
-      aiResponse = { answer: completion.choices[0].message.content, gaps: [] };
+      parsed = JSON.parse(completion.choices[0].message.content);
+    } catch {
+      parsed = { answer: completion.choices[0].message.content, gaps: [] };
     }
 
-    const answer = aiResponse.answer || "No logical answer generated.";
-    const gaps = aiResponse.gaps || [];
+    const answer = parsed.answer || "No answer generated.";
+    const gaps = parsed.gaps || [];
 
-    await supabase.from('messages').insert([
-      { chat_id: chatId, role: 'user', content: question },
-      { chat_id: chatId, role: 'assistant', content: answer }
+    // Persist messages
+    await supabase.from("messages").insert([
+      { chat_id: chatId, role: "user", content: question },
+      { chat_id: chatId, role: "assistant", content: answer, sources },
     ]);
 
-    // // Count page frequency
-    // const pageFrequency = {};
+    await supabase.from("chats").update({ created_at: new Date() }).eq("id", chatId);
 
-    // hits.forEach(hit => {
-    //   const p = hit.payload?.page;
-    //   if (p !== undefined && p !== null) {
-    //     pageFrequency[p] = (pageFrequency[p] || 0) + 1;
-    //   }
-    // });
-
-    // // Get page with highest frequency
-    // const dominantPage = Object.entries(pageFrequency)
-    //   .sort((a, b) => b[1] - a[1])[0]?.[0];
-
-    // console.log("🎯 Dominant answer page:", dominantPage);
-
-    await supabase
-    .from("chats")
-    .update({ updated_at: new Date() })
-    .eq("id", chatId);
-
-
-    // 🎯 REFINED SOURCES: Filter by score + De-duplicate by (pdfId, page)
-    const uniqueSources = [];
-    const sourceKeys = new Set();
-
-    for (const h of hits) {
-      if (h.score < 0.35) continue; // Skip low-confidence matches
-
-      const key = `${h.payload.pdfId}_${h.payload.page}`;
-      if (!sourceKeys.has(key)) {
-        sourceKeys.add(key);
-        uniqueSources.push({
-          page: h.payload.page,
-          pdfId: h.payload.pdfId,
-          score: Math.round(h.score * 100),
-          preview: h.payload.text.substring(0, 100) + "..."
-        });
-      }
-      if (uniqueSources.length >= 5) break; // Limit to 5 diverse sources
-    }
-
-    res.json({
-      chatId,
-      answer,
-      gaps,
-      page: uniqueSources[0]?.page || 1,
-      sources: uniqueSources,
-      chunkCount: hits.length
-    });
-
-    console.log("Top hit page:", hits[0]?.payload?.page);
-
-
+    res.json({ chatId, answer, gaps, sources, chunkCount: hits.length, mode: "pdf-rag" });
 
   } catch (err) {
-    console.error("❌ Error:", err.message);
+    console.error("Chat error:", err.message);
     res.status(500).json({ error: "Chat failed", debug: err.message });
   }
 });
 
+// ── INTERNET-AUGMENTED CHAT ─────────────────────────────────────────────────
+// Extracts keywords/authors from question, searches CrossRef + Semantic Scholar,
+// returns sources the user can follow up on. Falls back to a web-grounded answer.
+
+router.post("/internet", clerkAuth, async (req, res) => {
+  try {
+    const { question, chatId, workspaceId } = req.body;
+    if (!question) return res.status(400).json({ error: "question required" });
+
+    // Step 1: extract keywords with LLM
+    const kwCompletion = await getAi().chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      messages: [{
+        role: "user",
+        content: `Extract 3-5 academic search keywords and up to 2 author names from this research question. Return JSON only: {"keywords":["..."],"authors":["..."]}
+Question: ${question}`,
+      }],
+      temperature: 0.1,
+      max_tokens: 200,
+      response_format: { type: "json_object" },
+    });
+
+    let kwData = { keywords: [], authors: [] };
+    try { kwData = JSON.parse(kwCompletion.choices[0].message.content); } catch {}
+
+    const keywords = kwData.keywords || [];
+    const authors = kwData.authors || [];
+
+    // Step 2: Search CrossRef
+    const crossRefResults = [];
+    const searchQuery = [...keywords, ...authors].join(" ");
+    try {
+      const crRes = await fetch(
+        `https://api.crossref.org/works?query=${encodeURIComponent(searchQuery)}&rows=5&select=DOI,title,author,published-print,abstract,URL`,
+        { headers: { "User-Agent": "Radium/1.0 (research-tool)" }, signal: AbortSignal.timeout(8000) }
+      );
+      const crData = await crRes.json();
+      for (const item of (crData?.message?.items || [])) {
+        crossRefResults.push({
+          title: item.title?.[0] || "Untitled",
+          authors: (item.author || []).map(a => `${a.given || ""} ${a.family || ""}`.trim()).join(", "),
+          year: item["published-print"]?.["date-parts"]?.[0]?.[0] || "N/A",
+          doi: item.DOI,
+          url: item.URL || `https://doi.org/${item.DOI}`,
+          abstract: item.abstract?.replace(/<[^>]+>/g, "").substring(0, 300) || null,
+          source: "CrossRef",
+        });
+      }
+    } catch (err) {
+      console.warn("CrossRef fetch failed:", err.message);
+    }
+
+    // Step 3: Search Semantic Scholar
+    const semResults = [];
+    try {
+      const ssRes = await fetch(
+        `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(searchQuery)}&limit=5&fields=title,authors,year,abstract,url,externalIds`,
+        { headers: { "x-api-key": process.env.SEMANTIC_SCHOLAR_KEY || "" }, signal: AbortSignal.timeout(8000) }
+      );
+      const ssData = await ssRes.json();
+      for (const p of (ssData?.data || [])) {
+        semResults.push({
+          title: p.title || "Untitled",
+          authors: (p.authors || []).map(a => a.name).join(", "),
+          year: p.year || "N/A",
+          doi: p.externalIds?.DOI || null,
+          url: p.url || null,
+          abstract: p.abstract?.substring(0, 300) || null,
+          source: "Semantic Scholar",
+        });
+      }
+    } catch (err) {
+      console.warn("Semantic Scholar fetch failed:", err.message);
+    }
+
+    const allPapers = [...crossRefResults, ...semResults].slice(0, 8);
+
+    // Step 4: Synthesize answer with LLM using paper abstracts as context
+    const paperContext = allPapers
+      .filter(p => p.abstract)
+      .map(p => `[${p.title} (${p.year}), ${p.source}]\n${p.abstract}`)
+      .join("\n\n---\n\n");
+
+    const synthesisPrompt = `You are Radium, an academic research assistant.
+
+Using the following web-sourced paper abstracts, answer the user's question academically.
+Cite papers by title. If context is insufficient, say so.
+
+PAPERS FROM WEB SEARCH:
+${paperContext || "No abstracts available — answer from general knowledge."}
+
+USER QUESTION:
+${question}
+
+Provide a clear, cited academic answer in Markdown.`;
+
+    const answerCompletion = await getAi().chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      messages: [{ role: "user", content: synthesisPrompt }],
+      temperature: 0.4,
+      max_tokens: 3000,
+    });
+
+    const answer = answerCompletion.choices[0].message.content;
+
+    // Persist if chatId given
+    if (chatId) {
+      await supabase.from("messages").insert([
+        { chat_id: chatId, role: "user", content: question, mode: "internet" },
+        { chat_id: chatId, role: "assistant", content: answer, mode: "internet" },
+      ]);
+    }
+
+    res.json({
+      answer,
+      papers: allPapers,
+      keywords,
+      authors,
+      mode: "internet",
+    });
+
+  } catch (err) {
+    console.error("Internet chat error:", err.message);
+    res.status(500).json({ error: "Internet chat failed", debug: err.message });
+  }
+});
+
+// ── GET CHATS ───────────────────────────────────────────────────────────────
+
 router.get("/", clerkAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
-      .from("chats")
-      .select("id, title, workspace_id, created_at")
-      .eq("clerk_id", req.auth.userId)
-      .order("created_at", { ascending: false });
-
+      .from("chats").select("id, title, workspace_id, created_at")
+      .eq("clerk_id", req.auth.userId).order("created_at", { ascending: false });
     if (error) throw error;
     res.json(data || []);
   } catch (err) {
-    console.error("Chat list error:", err);
     res.json([]);
   }
 });
 
 router.get("/:chatId", clerkAuth, async (req, res) => {
   try {
-    const { chatId } = req.params;
-
     const { data, error } = await supabase
-      .from("chats")
-      .select("id, title, workspace_id, created_at")
-      .eq("id", chatId)
-      .eq("clerk_id", req.auth.userId)
-      .single();
-
-    if (error || !data) {
-      return res.status(404).json({ error: "Chat not found" });
-    }
-
+      .from("chats").select("id, title, workspace_id, created_at")
+      .eq("id", req.params.chatId).eq("clerk_id", req.auth.userId).single();
+    if (error || !data) return res.status(404).json({ error: "Chat not found" });
     res.json(data);
   } catch (err) {
-    console.error("Load chat error:", err.message);
     res.status(500).json({ error: "Failed to load chat" });
   }
 });
 
-
-
 router.get("/:chatId/messages", clerkAuth, async (req, res) => {
   try {
-    const { chatId } = req.params;
-
     const { data, error } = await supabase
-      .from("messages")
-      .select("id, role, content, created_at")
-      .eq("chat_id", chatId)
-      .order("created_at", { ascending: true });
-
+      .from("messages").select("id, role, content, sources, mode, created_at")
+      .eq("chat_id", req.params.chatId).order("created_at", { ascending: true });
     if (error) throw error;
-
     res.json(data || []);
   } catch (err) {
-    console.error("Load messages error:", err.message);
     res.status(500).json({ error: "Failed to load messages" });
   }
 });
 
-router.get('/:id/pdfs', clerkAuth, async (req, res) => {
+router.get("/:id/pdfs", clerkAuth, async (req, res) => {
   try {
-    const chatId = req.params.id;
-
-    if (!chatId) {
-      return res.status(400).json({ error: 'Chat ID is required' });
-    }
-
-    // 🔐 Get user from Clerk middleware (assumed you already have this)
     const clerkId = req.auth?.userId;
-    if (!clerkId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+    const { data: chat, error: chatErr } = await supabase
+      .from("chats").select("id, workspace_id, clerk_id").eq("id", req.params.id).single();
+    if (chatErr || !chat) return res.status(404).json({ error: "Chat not found" });
+    if (chat.clerk_id !== clerkId) return res.status(403).json({ error: "Forbidden" });
 
-    // ✅ Step 1: Verify chat belongs to user
-    const { data: chat, error: chatError } = await supabase
-      .from('chats')
-      .select('id, workspace_id, clerk_id')
-      .eq('id', chatId)
-      .single();
-
-    if (chatError || !chat) {
-      return res.status(404).json({ error: 'Chat not found' });
-    }
-
-    if (chat.clerk_id !== clerkId) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
-
-    // ✅ Step 2: Fetch PDFs linked to this chat's workspace
-    const { data: pdfs, error: pdfError } = await supabase
-      .from('user_pdfs')
-      .select('pdf_id, filename, storage_path, workspace_id, uploaded_at')
-      .eq('workspace_id', chat.workspace_id);
-
-    if (pdfError) {
-      console.error('❌ PDF fetch error:', pdfError);
-      return res.status(500).json({ error: 'Failed to fetch PDFs' });
-    }
-
-    return res.json(pdfs);
-
+    const { data: pdfs, error: pdfErr } = await supabase
+      .from("user_pdfs").select("pdf_id, filename, storage_path, workspace_id, uploaded_at")
+      .eq("workspace_id", chat.workspace_id);
+    if (pdfErr) return res.status(500).json({ error: "Failed to fetch PDFs" });
+    res.json(pdfs || []);
   } catch (err) {
-    console.error('🔥 GET /chat/:id/pdfs error:', err);
-    return res.status(500).json({
-      error: 'Internal server error',
-      details: err.message
-    });
+    res.status(500).json({ error: err.message });
   }
 });
-
 
 export default router;
