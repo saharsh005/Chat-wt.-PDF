@@ -142,7 +142,7 @@ router.post("/", clerkAuth, async (req, res) => {
     // LLM
     const prompt = buildRagPrompt(context, historyText, question);
     const completion = await getAi().chat.completions.create({
-      model: "llama-3.1-8b-instant",
+      model: "llama-3.3-70b-versatile",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3,
       max_tokens: 6000,
@@ -186,7 +186,7 @@ router.post("/internet", clerkAuth, async (req, res) => {
 
     // Step 1: extract keywords with LLM
     const kwCompletion = await getAi().chat.completions.create({
-      model: "llama-3.1-8b-instant",
+      model: "llama-3.3-70b-versatile",
       messages: [{
         role: "user",
         content: `Extract 3-5 academic search keywords and up to 2 author names from this research question. Return JSON only: {"keywords":["..."],"authors":["..."]}
@@ -272,7 +272,7 @@ ${question}
 Provide a clear, cited academic answer in Markdown.`;
 
     const answerCompletion = await getAi().chat.completions.create({
-      model: "llama-3.1-8b-instant",
+      model: "llama-3.3-70b-versatile",
       messages: [{ role: "user", content: synthesisPrompt }],
       temperature: 0.4,
       max_tokens: 3000,

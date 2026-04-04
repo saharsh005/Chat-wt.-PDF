@@ -39,6 +39,7 @@ router.post("/", clerkAuth, async (req, res) => {
 // ── LIST ────────────────────────────────────────────────────────────────────
 
 router.get("/", clerkAuth, async (req, res) => {
+  // console.log("AUTH DEBUG:", req.auth);
   try {
     const { data, error } = await supabase
       .from("workspaces").select("id, title, created_at")
@@ -142,7 +143,7 @@ router.get("/:id/research-gaps", clerkAuth, async (req, res) => {
 
     // Fetch filenames
     const { data: pdfMeta } = await supabase
-      .from("user_pdfs").select("pdf_id, filename").eq("workspace_id", workspaceId);
+      .from("user_pdfs").select("pdf_id, filename").eq("workspace_id", workspaceId).eq("clerk_id", userId);
     const pdfNameMap = Object.fromEntries((pdfMeta || []).map(p => [p.pdf_id, p.filename]));
 
     const combinedText = chunks.map(c => c.payload.text).join("\n\n---\n\n");
@@ -150,15 +151,24 @@ router.get("/:id/research-gaps", clerkAuth, async (req, res) => {
     const prompt = buildGapsPrompt(combinedText);
 
     const completion = await getAi().chat.completions.create({
-      model: "llama-3.1-8b-instant",
+      model: "llama-3.3-70b-versatile",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3,
       max_tokens: 3000,
       response_format: { type: "json_object" },
     });
 
-    const parsed = JSON.parse(completion.choices[0].message.content);
-    const gaps = parsed.gaps || [];
+    const rawContent = completion?.choices?.[0]?.message?.content;
+    let parsed = { gaps: [] };
+    if (rawContent) {
+      try {
+        parsed = JSON.parse(rawContent);
+      } catch (parseErr) {
+        console.warn("Research gaps parse error (fallback to empty gaps):", parseErr); 
+      }
+    }
+
+    const gaps = Array.isArray(parsed.gaps) ? parsed.gaps : [];
 
     // Attach source citations: find which PDF chunks relate to each gap
     const gapsWithCitations = gaps.map((gap, i) => ({
@@ -191,7 +201,7 @@ router.post("/:id/generate-abstract", clerkAuth, async (req, res) => {
     if (wsErr || !ws) return res.status(404).json({ error: "Workspace not found" });
 
     const { data: pdfMeta } = await supabase
-      .from("user_pdfs").select("pdf_id, filename").eq("workspace_id", workspaceId);
+      .from("user_pdfs").select("pdf_id, filename").eq("workspace_id", workspaceId).eq("clerk_id", userId);
 
     const collectionName = `pdfs_${userId}`;
     const { points: chunks } = await qdrant.scroll(collectionName, {
@@ -204,14 +214,16 @@ router.post("/:id/generate-abstract", clerkAuth, async (req, res) => {
     const prompt = buildAbstractPrompt(gapTitle, gapDescription, contextText, pdfMeta?.length || 0);
 
     const completion = await getAi().chat.completions.create({
-      model: "llama-3.1-8b-instant",
+      model: "llama-3.3-70b-versatile",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.5,
       max_tokens: 1500,
     });
 
+    const abstract = completion?.choices?.[0]?.message?.content || "No abstract generated.";
+
     res.json({
-      abstract: completion.choices[0].message.content,
+      abstract,
       sourceDocs: (pdfMeta || []).map(p => p.filename),
     });
   } catch (err) {

@@ -36,7 +36,11 @@ app.get("/health", (req, res) => res.json({ status: "ok", timestamp: new Date().
 app.get("/", (req, res) => res.json({ status: "Radium backend running 🚀" }));
 
 app.use((err, req, res, next) => {
-  console.error("Global error:", err.message);
+  console.error("Global error:", err.message, err);
+  // Handle Clerk auth errors
+  if (err.message?.includes("Unauthenticated")) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
   res.status(err.status || 500).json({ error: err.message || "Internal Server Error" });
 });
 
