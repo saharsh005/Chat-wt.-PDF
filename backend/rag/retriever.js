@@ -60,11 +60,11 @@ export async function retrieveChunks({
 
   return results.map((r) => ({
     pdfId:    r.payload.pdfId,
-    pdfTitle: r.payload.pdfTitle,
-    fileName: r.payload.fileName,
-    page:     r.payload.page,
-    section:  r.payload.section,
-    text:     r.payload.text,
+    pdfTitle: r.payload.pdfTitle || r.payload.fileName || "Untitled",
+    fileName: r.payload.fileName || "unknown.pdf",
+    page:     r.payload.page || 1,
+    section:  r.payload.section || "Unknown section",
+    text:     r.payload.text || "",
     score:    r.score,
   }));
 }
@@ -91,7 +91,7 @@ export function diversifyChunks(chunks, maxTotal = 12) {
 
   for (const c of chunks) {
     // Deduplicate: skip if a chunk with identical opening 120 chars was already taken
-    const fingerprint = c.text.substring(0, 120).trim();
+    const fingerprint = (c.text || "").substring(0, 120).trim();
     if (seenTexts.has(fingerprint)) continue;
     seenTexts.add(fingerprint);
 
@@ -196,7 +196,7 @@ export function buildContext(chunks) {
 
       // Structured header so the LLM can clearly read the provenance
       return [
-        `[${n}] Source: "${chunk.pdfTitle}"`,
+        `[${n}] Source: "${chunk.pdfTitle || chunk.fileName || "Untitled"}"`,
         `     Page: ${chunk.page} | Section: ${chunk.section}`,
         ``,
         chunk.text,
@@ -231,7 +231,7 @@ export function buildContext(chunks) {
  * @property {number} score           0-100
  * @property {string} preview         first 150 chars of chunk text
  */
-export function buildSources(chunks, citations) {
+export function buildSources(chunks = [], citations = []) {
   const seen    = new Set();
   const sources = [];
 
@@ -243,14 +243,15 @@ export function buildSources(chunks, citations) {
     seen.add(key);
 
     sources.push({
-      citationIndex: cite.index,         // [n] used in the answer
+      citationIndex: cite?.index ?? (i + 1), // [n] used in the answer
       pdfId:         c.pdfId,
       pdfTitle:      c.pdfTitle,
       fileName:      c.fileName,
+      filename:      c.fileName,
       page:          c.page,
       section:       c.section ?? null,
       score:         Math.round(c.score * 100),
-      preview:       c.text.substring(0, 150) + "…",
+      preview:       (c.text || "").substring(0, 150) + "…",
     });
 
     if (sources.length >= 8) break;

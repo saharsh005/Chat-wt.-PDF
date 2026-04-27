@@ -21,80 +21,85 @@ const GAP_COLORS = {
   'POPULATION GAP':     '#f472b6',
 };
 
-// Mode-based themes
 const THEMES = {
   pdf: {
-    bg:         '#0f0f0f',
-    bg2:        '#141414',
-    bg3:        '#1a1a1a',
-    border:     'rgba(255,255,255,0.07)',
-    borderHov:  'rgba(255,255,255,0.12)',
-    text:       '#f0ede8',
-    textSub:    '#8a8680',
-    textMuted:  '#4a4845',
-    accent:     '#c9a96e',
-    accentDim:  'rgba(201,169,110,0.10)',
-    accentBdr:  'rgba(201,169,110,0.22)',
-    modeLabel:  'PDF · RAG',
-    modeDot:    '#c9a96e',
-    tabActive:  '#c9a96e',
+    bg:        '#0f0f0f',
+    bg2:       '#141414',
+    bg3:       '#1a1a1a',
+    border:    'rgba(255,255,255,0.07)',
+    borderHov: 'rgba(255,255,255,0.12)',
+    text:      '#f0ede8',
+    textSub:   '#8a8680',
+    textMuted: '#4a4845',
+    accent:    '#c9a96e',
+    accentDim: 'rgba(201,169,110,0.10)',
+    accentBdr: 'rgba(201,169,110,0.22)',
+    modeLabel: 'PDF · RAG',
+    modeDot:   '#c9a96e',
+    tabActive: '#c9a96e',
   },
   internet: {
-    bg:         '#0a0d12',
-    bg2:        '#0d1117',
-    bg3:        '#131921',
-    border:     'rgba(123,159,212,0.10)',
-    borderHov:  'rgba(123,159,212,0.2)',
-    text:       '#e8edf5',
-    textSub:    '#7a8899',
-    textMuted:  '#3d4d5c',
-    accent:     '#7b9fd4',
-    accentDim:  'rgba(123,159,212,0.10)',
-    accentBdr:  'rgba(123,159,212,0.22)',
-    modeLabel:  'Web · Internet',
-    modeDot:    '#7b9fd4',
-    tabActive:  '#7b9fd4',
+    bg:        '#0a0d12',
+    bg2:       '#0d1117',
+    bg3:       '#131921',
+    border:    'rgba(123,159,212,0.10)',
+    borderHov: 'rgba(123,159,212,0.2)',
+    text:      '#e8edf5',
+    textSub:   '#7a8899',
+    textMuted: '#3d4d5c',
+    accent:    '#7b9fd4',
+    accentDim: 'rgba(123,159,212,0.10)',
+    accentBdr: 'rgba(123,159,212,0.22)',
+    modeLabel: 'Web · Internet',
+    modeDot:   '#7b9fd4',
+    tabActive: '#7b9fd4',
   },
 };
 
 export default function WorkspaceChatPage() {
   const { isLoaded, user } = useUser();
-  const { getToken } = useAuth();
-  const router = useRouter();
-  const params = useParams();
-  const workspaceId = params?.workspaceId;
-  const chatId      = params?.chatId;
+  const { getToken }       = useAuth();
+  const router             = useRouter();
+  const params             = useParams();
+  const workspaceId        = params?.workspaceId;
+  const chatId             = params?.chatId;
 
-  const [leftPct, setLeftPct]   = useState(48);
-  const [dragging, setDragging] = useState(false);
+  // ── Layout ────────────────────────────────────────────────────────────────
+  const [leftPct, setLeftPct]     = useState(48);
+  const [dragging, setDragging]   = useState(false);
   const [closedPdfIds, setClosedPdfIds] = useState(new Set());
 
-  const [workspace, setWorkspace]     = useState(null);
-  const [messages, setMessages]       = useState([]);
-  const [workspaceChats, setWsChats]  = useState([]);
-  const [workspacePdfs, setWsPdfs]    = useState([]);
-  const [activePdf, setActivePdf]     = useState(null);
-  const [activePage, setActivePage]   = useState(1);
-  const [researchGaps, setGaps]       = useState([]);
-  const [internetPapers, setIntPapers] = useState([]);
+  // ── Data ──────────────────────────────────────────────────────────────────
+  const [workspace, setWorkspace]       = useState(null);
+  const [messages, setMessages]         = useState([]);
+  const [workspaceChats, setWsChats]    = useState([]);
+  const [workspacePdfs, setWsPdfs]      = useState([]);
+  const [activePdf, setActivePdf]       = useState(null);
+  const [activePage, setActivePage]     = useState(1);
+  const [researchGaps, setGaps]         = useState([]);
+  const [internetPapers, setIntPapers]  = useState([]);
 
-  const [input, setInput]         = useState('');
-  const [sending, setSending]     = useState(false);
+  // ── UI state ──────────────────────────────────────────────────────────────
+  const [input, setInput]           = useState('');
+  const [sending, setSending]       = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [uploading, setUploading]   = useState(false);
   const [loadingGaps, setLoadingGaps] = useState(false);
-  const [showGaps, setShowGaps]   = useState(false);
-  const [viewingAbstract, setViewingAbstract] = useState(null);
-  const [abstractText, setAbstractText] = useState('');
-  const [genAbstract, setGenAbstract] = useState(false);
-  const [chatMode, setChatMode]   = useState('pdf');
-  const [copied, setCopied]       = useState(false);
+  const [showGaps, setShowGaps]     = useState(false);
+  const [chatMode, setChatMode]     = useState('pdf');
+  const [copied, setCopied]         = useState(false);
+
+  // ── Gap expansion & inline abstract ──────────────────────────────────────
+  const [expandedGapId, setExpandedGapId] = useState(null);
+  // { [gapId]: { text: string|null, loading: boolean } }
+  const [gapAbstracts, setGapAbstracts]   = useState({});
 
   const bottomRef   = useRef(null);
   const textareaRef = useRef(null);
 
   const th = THEMES[chatMode];
 
+  // ── Resizer ───────────────────────────────────────────────────────────────
   const onResizerDown = useCallback(e => { e.preventDefault(); setDragging(true); }, []);
   useEffect(() => {
     if (!dragging) return;
@@ -105,16 +110,20 @@ export default function WorkspaceChatPage() {
     const up = () => setDragging(false);
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
-    return () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+    return () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+    };
   }, [dragging]);
 
+  // ── Data loaders ──────────────────────────────────────────────────────────
   const loadWsData = useCallback(async () => {
     if (!workspaceId) return;
     const token = await getToken();
-    const hdr = { Authorization: `Bearer ${token}` };
+    const hdr   = { Authorization: `Bearer ${token}` };
     const [wsRes, pdfRes, chatRes] = await Promise.all([
-      fetch(`${API}/workspace/${workspaceId}`, { headers: hdr }),
-      fetch(`${API}/workspace/${workspaceId}/pdfs`, { headers: hdr }),
+      fetch(`${API}/workspace/${workspaceId}`,       { headers: hdr }),
+      fetch(`${API}/workspace/${workspaceId}/pdfs`,  { headers: hdr }),
       fetch(`${API}/workspace/${workspaceId}/chats`, { headers: hdr }),
     ]);
     const [ws, pdfs, chats] = await Promise.all([wsRes.json(), pdfRes.json(), chatRes.json()]);
@@ -129,16 +138,76 @@ export default function WorkspaceChatPage() {
     setLoadingMsgs(true);
     try {
       const token = await getToken();
-      const res = await fetch(`${API}/chat/${chatId}/messages`, { headers: { Authorization: `Bearer ${token}` } });
+      const res   = await fetch(`${API}/chat/${chatId}/messages`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const data = await res.json();
       setMessages(Array.isArray(data) ? data : []);
-    } finally { setLoadingMsgs(false); }
+    } finally {
+      setLoadingMsgs(false);
+    }
   }, [chatId, getToken]);
 
-  useEffect(() => { loadWsData(); }, [loadWsData]);
+  const loadGaps = useCallback(async () => {
+    if (!workspaceId) return;
+    setLoadingGaps(true);
+    try {
+      const token = await getToken();
+      const res   = await fetch(`${API}/workspace/${workspaceId}/research-gaps`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      setGaps(Array.isArray(data) ? data : []);
+      // Reset expansion state when gaps are refreshed
+      setExpandedGapId(null);
+      setGapAbstracts({});
+    } finally {
+      setLoadingGaps(false);
+    }
+  }, [workspaceId, getToken]);
+
+  useEffect(() => { loadWsData();   }, [loadWsData]);
   useEffect(() => { loadMessages(); }, [loadMessages]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
+  // ── Gap toggle + inline abstract fetch ───────────────────────────────────
+  const toggleGap = useCallback(async (gap) => {
+    const id = gap.id;
+
+    // Collapse if already open
+    if (expandedGapId === id) {
+      setExpandedGapId(null);
+      return;
+    }
+
+    setExpandedGapId(id);
+
+    // Already fetched — nothing to do
+    if (gapAbstracts[id]?.text) return;
+
+    // Start loading
+    setGapAbstracts(prev => ({ ...prev, [id]: { text: null, loading: true } }));
+    try {
+      const token = await getToken();
+      const res   = await fetch(`${API}/workspace/${workspaceId}/generate-abstract`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body:    JSON.stringify({ gapTitle: gap.title, gapDescription: gap.description }),
+      });
+      const data = await res.json();
+      setGapAbstracts(prev => ({
+        ...prev,
+        [id]: { text: data.abstract || 'No abstract generated.', loading: false },
+      }));
+    } catch {
+      setGapAbstracts(prev => ({
+        ...prev,
+        [id]: { text: '⚠️ Failed to generate abstract.', loading: false },
+      }));
+    }
+  }, [expandedGapId, gapAbstracts, workspaceId, getToken]);
+
+  // ── Actions ───────────────────────────────────────────────────────────────
   const sendMessage = async () => {
     const text = input.trim();
     if (!text || sending) return;
@@ -146,27 +215,42 @@ export default function WorkspaceChatPage() {
     setMessages(prev => [...prev, { role: 'user', content: text, mode: chatMode }]);
     setSending(true);
     try {
-      const token = await getToken();
+      const token    = await getToken();
       const endpoint = chatMode === 'internet' ? `${API}/chat/internet` : `${API}/chat`;
       const res = await fetch(endpoint, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ question: text, chatId, workspaceId }),
+        body:    JSON.stringify({ question: text, chatId, workspaceId }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        const msg = data?.debug || data?.error || 'Request failed';
+        throw new Error(msg);
+      }
       setMessages(prev => [...prev, {
-        role: 'assistant',
+        role:    'assistant',
         content: data.answer || 'No response generated.',
         sources: data.sources || [],
-        papers: data.papers || [],
-        gaps: data.gaps || [],
-        mode: chatMode,
+        papers:  data.papers  || [],
+        gaps:    data.gaps    || [],
+        mode:    chatMode,
       }]);
-      if (data.gaps?.length) setGaps(prev => [...data.gaps, ...prev.filter(g => !data.gaps.find(ng => ng.title === g.title))]);
+      if (data.gaps?.length) {
+        setGaps(prev => [
+          ...data.gaps,
+          ...prev.filter(g => !data.gaps.find(ng => ng.title === g.title)),
+        ]);
+      }
       if (data.papers?.length) setIntPapers(data.papers);
-    } catch {
-      setMessages(prev => [...prev, { role: 'assistant', content: '⚠️ Request failed. Please try again.', sources: [] }]);
-    } finally { setSending(false); }
+    } catch (err) {
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `⚠️ ${err?.message || 'Request failed. Please try again.'}`,
+        sources: [],
+      }]);
+    } finally {
+      setSending(false);
+    }
   };
 
   const uploadPDFs = async files => {
@@ -175,41 +259,24 @@ export default function WorkspaceChatPage() {
     const token = await getToken();
     for (const file of Array.from(files)) {
       const fd = new FormData();
-      fd.append('pdf', file); fd.append('workspaceId', workspaceId);
-      await fetch(`${API}/upload`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
+      fd.append('pdf', file);
+      fd.append('workspaceId', workspaceId);
+      await fetch(`${API}/upload`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
+      });
     }
     await loadWsData();
+    await loadGaps();
+    setShowGaps(true);
     setUploading(false);
-  };
-
-  const loadGaps = async () => {
-    setLoadingGaps(true);
-    const token = await getToken();
-    const res = await fetch(`${API}/workspace/${workspaceId}/research-gaps`, { headers: { Authorization: `Bearer ${token}` } });
-    const data = await res.json();
-    setGaps(Array.isArray(data) ? data : []);
-    setLoadingGaps(false);
-  };
-
-  const generateAbstract = async gap => {
-    setViewingAbstract(gap); setGenAbstract(true); setAbstractText('');
-    const token = await getToken();
-    const res = await fetch(`${API}/workspace/${workspaceId}/generate-abstract`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ gapTitle: gap.title, gapDescription: gap.description }),
-    });
-    const data = await res.json();
-    setAbstractText(data.abstract || 'Failed to generate abstract.');
-    setGenAbstract(false);
   };
 
   const newChat = async () => {
     const token = await getToken();
-    const res = await fetch(`${API}/chat/create`, {
-      method: 'POST',
+    const res   = await fetch(`${API}/chat/create`, {
+      method:  'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ workspaceId }),
+      body:    JSON.stringify({ workspaceId }),
     });
     const data = await res.json();
     await loadWsData();
@@ -221,12 +288,18 @@ export default function WorkspaceChatPage() {
     if (!confirm('Delete this chat and all its messages?')) return;
     try {
       const token = await getToken();
-      const res = await fetch(`${API}/chat/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      const res   = await fetch(`${API}/chat/${id}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+      });
       if (res.ok) {
         const updated = workspaceChats.filter(c => c.id !== id);
         setWsChats(updated);
         if (chatId === String(id)) {
-          router.push(updated.length > 0 ? `/workspace/${workspaceId}/chat/${updated[0].id}` : `/workspace/${workspaceId}`);
+          router.push(
+            updated.length > 0
+              ? `/workspace/${workspaceId}/chat/${updated[0].id}`
+              : `/workspace/${workspaceId}`
+          );
         }
       }
     } catch (err) { console.error(err); }
@@ -243,12 +316,18 @@ export default function WorkspaceChatPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // ── Loading screen ────────────────────────────────────────────────────────
   if (!isLoaded) return (
-    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', background:'#0f0f0f', color:'#4a4845', fontFamily:"'DM Sans', sans-serif", fontSize:13 }}>
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      height: '100vh', background: '#0f0f0f', color: '#4a4845',
+      fontFamily: "'DM Sans', sans-serif", fontSize: 13,
+    }}>
       Loading…
     </div>
   );
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
       <style>{`
@@ -257,44 +336,38 @@ export default function WorkspaceChatPage() {
         *, *::before, *::after { box-sizing: border-box; }
 
         :root {
-          --th-bg: ${th.bg};
-          --th-bg2: ${th.bg2};
-          --th-bg3: ${th.bg3};
-          --th-border: ${th.border};
-          --th-text: ${th.text};
-          --th-sub: ${th.textSub};
-          --th-muted: ${th.textMuted};
-          --th-accent: ${th.accent};
+          --th-bg:         ${th.bg};
+          --th-bg2:        ${th.bg2};
+          --th-bg3:        ${th.bg3};
+          --th-border:     ${th.border};
+          --th-text:       ${th.text};
+          --th-sub:        ${th.textSub};
+          --th-muted:      ${th.textMuted};
+          --th-accent:     ${th.accent};
           --th-accent-dim: ${th.accentDim};
           --th-accent-bdr: ${th.accentBdr};
         }
 
-        @keyframes spin    { to { transform: rotate(360deg); } }
-        @keyframes pulse   { 0%,100%{opacity:.25;transform:scale(.8)} 50%{opacity:1;transform:scale(1.15)} }
-        @keyframes fadeUp  { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes themeIn { from{opacity:0} to{opacity:1} }
+        @keyframes spin   { to { transform: rotate(360deg); } }
+        @keyframes pulse  { 0%,100%{opacity:.25;transform:scale(.8)} 50%{opacity:1;transform:scale(1.15)} }
+        @keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes themeIn{ from{opacity:0} to{opacity:1} }
 
         .chat-root {
           display: flex; flex-direction: column; height: 100vh;
-          background: var(--th-bg);
-          color: var(--th-text);
+          background: var(--th-bg); color: var(--th-text);
           font-family: 'DM Sans', sans-serif;
           overflow: hidden;
           transition: background 0.35s ease, color 0.35s ease;
           animation: themeIn 0.25s ease;
         }
 
-        /* ── THIN SCROLLBARS ── */
-        * {
-          scrollbar-width: thin;
-          scrollbar-color: ${th.border} transparent;
-        }
+        * { scrollbar-width: thin; scrollbar-color: ${th.border} transparent; }
         *::-webkit-scrollbar { width: 3px; height: 3px; }
         *::-webkit-scrollbar-track { background: transparent; }
         *::-webkit-scrollbar-thumb { background: ${th.border}; border-radius: 99px; }
         *::-webkit-scrollbar-thumb:hover { background: ${th.borderHov}; }
 
-        /* ── NAV ── */
         .nav {
           display: flex; align-items: center; height: 46px;
           padding: 0 16px; gap: 10px; flex-shrink: 0;
@@ -302,29 +375,23 @@ export default function WorkspaceChatPage() {
           background: var(--th-bg);
           transition: background 0.35s ease, border-color 0.35s ease;
         }
-
         .nav-logo-name {
           font-family: 'DM Serif Display', serif;
           font-size: 15px; color: var(--th-text);
           letter-spacing: -0.01em; line-height: 1;
         }
-
         .nav-logo-icon svg { width: 24px; height: 24px; }
-
         .nav-sep { font-size: 14px; color: var(--th-muted); }
-        .nav-ws  { font-size: 12px; font-weight: 500; color: var(--th-sub); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-        /* Mode toggle */
-        .mode-toggle {
-          display: flex;
-          background: var(--th-bg3);
-          border: 1px solid var(--th-border);
-          border-radius: 9px;
-          padding: 3px;
-          gap: 2px;
-          transition: all 0.3s ease;
+        .nav-ws  {
+          font-size: 12px; font-weight: 500; color: var(--th-sub);
+          max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
 
+        .mode-toggle {
+          display: flex; background: var(--th-bg3);
+          border: 1px solid var(--th-border); border-radius: 9px;
+          padding: 3px; gap: 2px; transition: all 0.3s ease;
+        }
         .mode-btn {
           display: flex; align-items: center; gap: 5px;
           padding: 5px 12px; border-radius: 7px; border: none;
@@ -333,32 +400,22 @@ export default function WorkspaceChatPage() {
           cursor: pointer; transition: all 0.22s ease;
           background: transparent;
         }
-
         .mode-btn.active {
-          background: var(--th-bg);
-          color: var(--th-accent);
+          background: var(--th-bg); color: var(--th-accent);
           box-shadow: 0 1px 6px rgba(0,0,0,0.35);
         }
-
         .mode-btn.inactive { color: var(--th-muted); }
         .mode-btn.inactive:hover { color: var(--th-sub); }
 
-        /* Icon nav buttons */
         .icon-btn {
-          background: none;
-          border: 1px solid var(--th-border);
-          border-radius: 7px;
-          color: var(--th-sub);
-          cursor: pointer;
+          background: none; border: 1px solid var(--th-border);
+          border-radius: 7px; color: var(--th-sub); cursor: pointer;
           display: flex; align-items: center; justify-content: center;
-          width: 28px; height: 28px;
-          padding: 0;
-          transition: all 0.15s;
-          flex-shrink: 0;
+          width: 28px; height: 28px; padding: 0;
+          transition: all 0.15s; flex-shrink: 0;
         }
         .icon-btn:hover { border-color: var(--th-accent-bdr); color: var(--th-accent); }
 
-        /* ── TABS ── */
         .tabs-bar {
           display: flex; align-items: center; height: 36px;
           border-bottom: 1px solid var(--th-border);
@@ -366,7 +423,6 @@ export default function WorkspaceChatPage() {
           overflow-x: auto; flex-shrink: 0;
           transition: background 0.35s ease;
         }
-
         .tab {
           display: flex; align-items: center; gap: 5px;
           padding: 0 11px; height: 100%;
@@ -376,92 +432,66 @@ export default function WorkspaceChatPage() {
           font-size: 11px; font-weight: 400; color: var(--th-muted);
           border-bottom: 2px solid transparent;
         }
-
         .tab.active {
-          background: var(--th-bg);
-          color: var(--th-text);
-          font-weight: 500;
-          border-bottom: 2px solid var(--th-accent);
+          background: var(--th-bg); color: var(--th-text);
+          font-weight: 500; border-bottom: 2px solid var(--th-accent);
         }
-
         .tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
         .tab-x {
           margin-left: 3px; flex-shrink: 0; opacity: 0; cursor: pointer;
           display: flex; align-items: center;
-          transition: opacity 0.15s, color 0.15s;
-          color: var(--th-muted);
+          transition: opacity 0.15s, color 0.15s; color: var(--th-muted);
         }
         .tab:hover .tab-x { opacity: 1; }
         .tab-x:hover { color: #c0614a !important; }
-
         .tab-add {
           display: flex; align-items: center; justify-content: center;
           padding: 0 11px; height: 100%;
           border-right: 1px solid var(--th-border);
-          cursor: pointer; flex-shrink: 0;
-          color: var(--th-muted);
+          cursor: pointer; flex-shrink: 0; color: var(--th-muted);
           background: none; border-top: none; border-left: none; border-bottom: none;
           transition: color 0.15s;
         }
         .tab-add:hover { color: var(--th-accent); }
 
-        /* ── MODE BANNER ── */
         .mode-banner {
           display: flex; align-items: center;
           padding: 6px 14px; gap: 8px;
           border-bottom: 1px solid var(--th-border);
-          background: var(--th-bg2);
-          flex-shrink: 0;
+          background: var(--th-bg2); flex-shrink: 0;
           transition: all 0.35s ease;
         }
-
         .mode-pill {
           display: inline-flex; align-items: center; gap: 5px;
           padding: 3px 9px; border-radius: 20px;
-          background: var(--th-accent-dim);
-          border: 1px solid var(--th-accent-bdr);
-          font-size: 10px; font-weight: 600;
-          color: var(--th-accent);
-          letter-spacing: 0.05em;
-          text-transform: uppercase;
+          background: var(--th-accent-dim); border: 1px solid var(--th-accent-bdr);
+          font-size: 10px; font-weight: 600; color: var(--th-accent);
+          letter-spacing: 0.05em; text-transform: uppercase;
           transition: all 0.35s ease;
         }
-
         .mode-dot {
           width: 5px; height: 5px; border-radius: 50%;
-          background: var(--th-accent);
-          transition: background 0.35s ease;
+          background: var(--th-accent); transition: background 0.35s ease;
         }
 
-        /* ── MESSAGES ── */
         .messages { flex: 1; overflow-y: auto; padding: 18px 16px 8px; }
-
         .msg-fade { animation: fadeUp 0.22s ease both; }
 
         .ai-avatar {
           width: 26px; height: 26px; border-radius: 7px;
-          background: var(--th-bg3);
-          border: 1px solid var(--th-accent-bdr);
+          background: var(--th-bg3); border: 1px solid var(--th-accent-bdr);
           display: flex; align-items: center; justify-content: center;
-          flex-shrink: 0;
-          transition: all 0.35s ease;
+          flex-shrink: 0; transition: all 0.35s ease;
         }
-
         .ai-label {
-          font-size: 10px; font-weight: 600;
-          color: var(--th-accent);
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-          margin-bottom: 5px;
-          transition: color 0.35s ease;
+          font-size: 10px; font-weight: 600; color: var(--th-accent);
+          letter-spacing: 0.08em; text-transform: uppercase;
+          margin-bottom: 5px; transition: color 0.35s ease;
         }
-
         .md-body {
           font-size: 13px; color: var(--th-text);
           line-height: 1.7; font-weight: 300;
         }
-
         .md-body p { margin-bottom: 10px; }
         .md-body p:last-child { margin-bottom: 0; }
         .md-body strong { font-weight: 600; color: var(--th-text); }
@@ -472,115 +502,78 @@ export default function WorkspaceChatPage() {
 
         .source-chip {
           display: inline-flex; align-items: center; gap: 4px;
-          background: var(--th-bg3);
-          border: 1px solid var(--th-border);
+          background: var(--th-bg3); border: 1px solid var(--th-border);
           border-radius: 6px; padding: 3px 8px;
           font-size: 10px; color: var(--th-muted);
           cursor: pointer; transition: all 0.18s;
         }
-        .source-chip:hover {
-          border-color: var(--th-accent-bdr);
-          color: var(--th-text);
-        }
+        .source-chip:hover { border-color: var(--th-accent-bdr); color: var(--th-text); }
 
         .user-bubble {
-          background: var(--th-bg2);
-          border: 1px solid var(--th-border);
+          background: var(--th-bg2); border: 1px solid var(--th-border);
           border-radius: 10px; padding: 10px 14px;
           font-size: 13px; color: var(--th-text);
           max-width: 78%; line-height: 1.65; font-weight: 300;
           transition: all 0.35s ease;
         }
 
-        /* ── INPUT ── */
-        .input-wrap {
-          padding: 10px 12px; flex-shrink: 0;
-        }
-
+        .input-wrap { padding: 10px 12px; flex-shrink: 0; }
         .input-box {
-          background: var(--th-bg2);
-          border: 1px solid var(--th-border);
+          background: var(--th-bg2); border: 1px solid var(--th-border);
           border-radius: 12px; overflow: hidden;
           transition: border-color 0.2s, background 0.35s ease;
         }
         .input-box:focus-within { border-color: var(--th-accent-bdr); }
-
         .input-box textarea {
-          width: 100%; background: transparent;
-          border: none; outline: none;
+          width: 100%; background: transparent; border: none; outline: none;
           padding: 11px 14px 5px;
           font-size: 13px; color: var(--th-text);
           resize: none; font-family: 'DM Sans', sans-serif;
           line-height: 1.55; font-weight: 300;
         }
         .input-box textarea::placeholder { color: var(--th-muted); }
-
         .input-footer {
           display: flex; align-items: center;
           padding: 5px 10px 10px; gap: 8px;
         }
-
         .send-btn {
           width: 30px; height: 30px; border-radius: 8px;
           border: none; cursor: pointer;
           display: flex; align-items: center; justify-content: center;
-          transition: all 0.2s;
-          flex-shrink: 0;
+          transition: all 0.2s; flex-shrink: 0;
         }
 
-        /* ── STATUS BAR ── */
         .status-bar {
-          height: 26px;
-          border-top: 1px solid var(--th-border);
+          height: 26px; border-top: 1px solid var(--th-border);
           background: var(--th-bg2);
           display: flex; align-items: center;
-          padding: 0 14px; gap: 14px;
-          flex-shrink: 0;
+          padding: 0 14px; gap: 14px; flex-shrink: 0;
           transition: all 0.35s ease;
         }
 
-        /* ── GAP PANEL ── */
         .gap-panel {
           position: absolute; top: 0; right: 0; bottom: 0; width: 340px;
-          background: var(--th-bg);
-          border-left: 1px solid var(--th-border);
+          background: var(--th-bg); border-left: 1px solid var(--th-border);
           display: flex; flex-direction: column;
-          z-index: 20;
-          box-shadow: -8px 0 40px rgba(0,0,0,0.4);
+          z-index: 20; box-shadow: -8px 0 40px rgba(0,0,0,0.4);
           animation: fadeUp 0.2s ease both;
           transition: background 0.35s ease;
         }
-
         .gap-card {
-          background: var(--th-bg2);
-          border: 1px solid var(--th-border);
+          background: var(--th-bg2); border: 1px solid var(--th-border);
           border-radius: 10px; padding: 14px;
-          transition: background 0.15s;
+          cursor: pointer; transition: background 0.15s, border-color 0.15s;
         }
         .gap-card:hover { background: var(--th-bg3); }
+        .gap-card.expanded { border-color: var(--th-accent-bdr); }
 
-        .gap-abstract-btn {
-          margin-top: 10px; width: 100%;
-          background: var(--th-accent-dim);
-          border: 1px solid var(--th-accent-bdr);
-          border-radius: 7px; padding: 7px 10px;
-          font-size: 11px; color: var(--th-accent);
-          cursor: pointer; display: flex;
-          align-items: center; justify-content: center;
-          gap: 5px; font-family: 'DM Sans', sans-serif;
-          transition: all 0.18s;
-        }
-
-        /* ── TYPING DOTS ── */
         .typing-dot {
           width: 6px; height: 6px; border-radius: 50%;
           background: var(--th-accent);
           animation: pulse 1.2s ease-in-out infinite;
         }
 
-        @media (max-width: 640px) {
-          .nav { padding: 0 10px; }
-        }
+        @media (max-width: 640px) { .nav { padding: 0 10px; } }
       `}</style>
 
       <div className="chat-root">
@@ -591,8 +584,10 @@ export default function WorkspaceChatPage() {
             <ChevronLeft size={13} />
           </button>
 
-          {/* Logo */}
-          <div style={{ display:'flex', alignItems:'center', gap:9, cursor:'pointer' }} onClick={() => router.push('/workspace')}>
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer' }}
+            onClick={() => router.push('/workspace')}
+          >
             <div className="nav-logo-icon">
               <svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <rect x="5" y="4" width="14" height="20" rx="2" stroke={th.accent} strokeWidth="1.4" fill="none"/>
@@ -608,95 +603,137 @@ export default function WorkspaceChatPage() {
           <span className="nav-sep">/</span>
           <span className="nav-ws">{workspace?.title || '…'}</span>
 
-          <div style={{ flex:1 }} />
+          <div style={{ flex: 1 }} />
 
-          {/* Mode toggle */}
           <div className="mode-toggle">
             {[
               { key: 'pdf',      icon: <BookOpen size={11} />, label: 'PDF' },
               { key: 'internet', icon: <Globe size={11} />,    label: 'Web' },
             ].map(m => (
-              <button key={m.key}
+              <button
+                key={m.key}
                 className={`mode-btn ${chatMode === m.key ? 'active' : 'inactive'}`}
-                onClick={() => setChatMode(m.key)}>
+                onClick={() => setChatMode(m.key)}
+              >
                 {m.icon} {m.label}
               </button>
             ))}
           </div>
 
-          <button className="icon-btn" title="Research gaps"
-            onClick={() => { setShowGaps(v => { if (!v && researchGaps.length === 0) loadGaps(); return !v; }); }}>
+          <button
+            className="icon-btn"
+            title="Research gaps"
+            onClick={() => {
+              setShowGaps(v => {
+                if (!v && researchGaps.length === 0) loadGaps();
+                return !v;
+              });
+            }}
+          >
             <Sparkles size={13} style={{ color: showGaps ? th.accent : undefined }} />
           </button>
+
           <button className="icon-btn" onClick={copyLink} title="Copy link">
-            {copied ? <Check size={13} style={{ color:'#4ade80' }} /> : <Share2 size={13} />}
+            {copied
+              ? <Check size={13} style={{ color: '#4ade80' }} />
+              : <Share2 size={13} />}
           </button>
 
           {user?.imageUrl
-            ? <img src={user.imageUrl} style={{ width:26, height:26, borderRadius:'50%', border:`1px solid ${th.border}`, objectFit:'cover', flexShrink:0 }} alt="avatar" />
-            : <div style={{ width:26, height:26, borderRadius:'50%', background:th.bg3, border:`1px solid ${th.border}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, flexShrink:0 }}>👤</div>
+            ? <img src={user.imageUrl} style={{ width: 26, height: 26, borderRadius: '50%', border: `1px solid ${th.border}`, objectFit: 'cover', flexShrink: 0 }} alt="avatar" />
+            : <div style={{ width: 26, height: 26, borderRadius: '50%', background: th.bg3, border: `1px solid ${th.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, flexShrink: 0 }}>👤</div>
           }
         </nav>
 
         {/* ── BODY ── */}
-        <div style={{ flex:1, display:'flex', overflow:'hidden', cursor: dragging ? 'col-resize' : 'auto', userSelect: dragging ? 'none' : 'auto' }}>
+        <div style={{
+          flex: 1, display: 'flex', overflow: 'hidden',
+          cursor: dragging ? 'col-resize' : 'auto',
+          userSelect: dragging ? 'none' : 'auto',
+        }}>
 
           {/* ── LEFT: PDF PANEL ── */}
-          <div style={{ width:`${leftPct}%`, flexShrink:0, display:'flex', flexDirection:'column', borderRight:`1px solid ${th.border}`, overflow:'hidden' }}>
-
+          <div style={{
+            width: `${leftPct}%`, flexShrink: 0,
+            display: 'flex', flexDirection: 'column',
+            borderRight: `1px solid ${th.border}`, overflow: 'hidden',
+          }}>
             {/* PDF tabs */}
             <div className="tabs-bar">
               {workspacePdfs.filter(p => !closedPdfIds.has(p.pdf_id)).map(pdf => {
                 const active = activePdf?.pdf_id === pdf.pdf_id;
                 return (
-                  <div key={pdf.pdf_id}
+                  <div
+                    key={pdf.pdf_id}
                     className={`tab ${active ? 'active' : ''}`}
-                    onClick={() => { setActivePdf(pdf); setActivePage(1); }}>
-                    <FileText size={10} style={{ flexShrink:0, color: active ? th.accent : th.textMuted }} />
+                    onClick={() => { setActivePdf(pdf); setActivePage(1); }}
+                  >
+                    <FileText size={10} style={{ flexShrink: 0, color: active ? th.accent : th.textMuted }} />
                     <span>{pdf.filename}</span>
-                    <span className="tab-x"
-                      onClick={e => { e.stopPropagation(); setClosedPdfIds(s => new Set([...s, pdf.pdf_id])); if (activePdf?.pdf_id === pdf.pdf_id) setActivePdf(null); }}>
+                    <span
+                      className="tab-x"
+                      onClick={e => {
+                        e.stopPropagation();
+                        setClosedPdfIds(s => new Set([...s, pdf.pdf_id]));
+                        if (activePdf?.pdf_id === pdf.pdf_id) setActivePdf(null);
+                      }}
+                    >
                       <X size={9} />
                     </span>
                   </div>
                 );
               })}
               <label className="tab-add" title="Upload PDF">
-                {uploading ? <Loader2 size={11} style={{ animation:'spin 0.8s linear infinite' }} /> : <Plus size={11} />}
+                {uploading
+                  ? <Loader2 size={11} style={{ animation: 'spin 0.8s linear infinite' }} />
+                  : <Plus size={11} />}
                 <input type="file" multiple accept=".pdf" hidden onChange={e => uploadPDFs(e.target.files)} />
               </label>
             </div>
 
             {/* PDF viewer */}
-            <div style={{ flex:1, overflow:'hidden', background:'#080808', display:'flex', alignItems: activePdf ? 'flex-start' : 'center', justifyContent:'center' }}>
+            <div style={{
+              flex: 1, overflow: 'hidden', background: '#080808',
+              display: 'flex',
+              alignItems: activePdf ? 'flex-start' : 'center',
+              justifyContent: 'center',
+            }}>
               {activePdf ? (
                 <PdfViewer pdfId={activePdf.pdf_id} page={activePage} />
               ) : (
-                <div style={{ textAlign:'center', color:th.textMuted, padding:40 }}>
-                  <FileText size={32} style={{ marginBottom:10, opacity:0.2 }} />
-                  <div style={{ fontSize:13, fontFamily:"'DM Serif Display', serif", fontStyle:'italic' }}>No PDF open</div>
-                  <div style={{ fontSize:11, marginTop:4, opacity:0.5, fontWeight:300 }}>Upload or select a document</div>
+                <div style={{ textAlign: 'center', color: th.textMuted, padding: 40 }}>
+                  <FileText size={32} style={{ marginBottom: 10, opacity: 0.2 }} />
+                  <div style={{ fontSize: 13, fontFamily: "'DM Serif Display', serif", fontStyle: 'italic' }}>No PDF open</div>
+                  <div style={{ fontSize: 11, marginTop: 4, opacity: 0.5, fontWeight: 300 }}>Upload or select a document</div>
                 </div>
               )}
             </div>
           </div>
 
           {/* ── RESIZER ── */}
-          <div onMouseDown={onResizerDown}
-            style={{ width:4, flexShrink:0, cursor:'col-resize', background: dragging ? th.accent : 'transparent', transition:'background .2s', zIndex:5 }} />
+          <div
+            onMouseDown={onResizerDown}
+            style={{
+              width: 4, flexShrink: 0, cursor: 'col-resize',
+              background: dragging ? th.accent : 'transparent',
+              transition: 'background .2s', zIndex: 5,
+            }}
+          />
 
           {/* ── RIGHT: CHAT ── */}
-          <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', position:'relative' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
 
             {/* Chat tabs */}
             <div className="tabs-bar">
               {workspaceChats.map(chat => {
                 const active = chatId === String(chat.id);
                 return (
-                  <div key={chat.id}
+                  <div
+                    key={chat.id}
                     className={`tab ${active ? 'active' : ''}`}
-                    onClick={() => router.push(`/workspace/${workspaceId}/chat/${chat.id}`)}>
-                    <MessageSquare size={10} style={{ flexShrink:0, color: active ? th.accent : th.textMuted }} />
+                    onClick={() => router.push(`/workspace/${workspaceId}/chat/${chat.id}`)}
+                  >
+                    <MessageSquare size={10} style={{ flexShrink: 0, color: active ? th.accent : th.textMuted }} />
                     <span>{chat.title || 'Chat'}</span>
                     <span className="tab-x" onClick={e => deleteChat(e, chat.id)}>
                       <X size={9} />
@@ -716,47 +753,49 @@ export default function WorkspaceChatPage() {
                 {th.modeLabel}
               </div>
               {chatMode === 'pdf' && activePdf && (
-                <span style={{ fontSize:11, color:th.textMuted, fontWeight:300 }}>{activePdf.filename}</span>
+                <span style={{ fontSize: 11, color: th.textMuted, fontWeight: 300 }}>{activePdf.filename}</span>
               )}
               {chatMode === 'internet' && (
-                <span style={{ fontSize:11, color:th.textMuted, fontWeight:300 }}>CrossRef · Semantic Scholar</span>
+                <span style={{ fontSize: 11, color: th.textMuted, fontWeight: 300 }}>CrossRef · Semantic Scholar</span>
               )}
             </div>
 
             {/* Messages */}
             <div className="messages">
               {loadingMsgs && (
-                <div style={{ display:'flex', justifyContent:'center', padding:48 }}>
-                  <Loader2 size={18} style={{ color:th.textMuted, animation:'spin 0.9s linear infinite' }} />
+                <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}>
+                  <Loader2 size={18} style={{ color: th.textMuted, animation: 'spin 0.9s linear infinite' }} />
                 </div>
               )}
 
               {messages.length === 0 && !loadingMsgs && (
-                <div style={{ textAlign:'center', padding:'60px 20px', color:th.textMuted }}>
-                  <div style={{ fontFamily:"'DM Serif Display', serif", fontSize:20, fontStyle:'italic', marginBottom:8, color:th.textSub }}>
+                <div style={{ textAlign: 'center', padding: '60px 20px', color: th.textMuted }}>
+                  <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, fontStyle: 'italic', marginBottom: 8, color: th.textSub }}>
                     Ask anything
                   </div>
-                  <div style={{ fontSize:12, fontWeight:300 }}>
-                    {chatMode === 'pdf' ? 'Queries are grounded across your uploaded documents.' : 'Searches CrossRef and Semantic Scholar in real time.'}
+                  <div style={{ fontSize: 12, fontWeight: 300 }}>
+                    {chatMode === 'pdf'
+                      ? 'Queries are grounded across your uploaded documents.'
+                      : 'Searches CrossRef and Semantic Scholar in real time.'}
                   </div>
                 </div>
               )}
 
               {messages.map((m, i) => (
-                <div key={i} style={{ marginBottom:22 }} className="msg-fade">
+                <div key={i} style={{ marginBottom: 22 }} className="msg-fade">
                   {m.role === 'assistant' ? (
-                    <div style={{ display:'flex', gap:10, alignItems:'flex-start' }}>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                       <div className="ai-avatar">
                         <svg viewBox="0 0 28 28" fill="none" width="14" height="14">
                           <rect x="5" y="4" width="14" height="20" rx="2" stroke={th.accent} strokeWidth="1.6" fill="none"/>
                           <rect x="9" y="4" width="14" height="20" rx="2" stroke={`${th.accent}55`} strokeWidth="1.6" fill={`${th.accent}08`}/>
                         </svg>
                       </div>
-                      <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         <div className="ai-label">
                           Radium
                           {m.mode === 'internet' && (
-                            <span style={{ marginLeft:6, fontSize:9, color:th.accent, background:th.accentDim, border:`1px solid ${th.accentBdr}`, borderRadius:4, padding:'1px 5px', letterSpacing:'0.06em' }}>WEB</span>
+                            <span style={{ marginLeft: 6, fontSize: 9, color: th.accent, background: th.accentDim, border: `1px solid ${th.accentBdr}`, borderRadius: 4, padding: '1px 5px', letterSpacing: '0.06em' }}>WEB</span>
                           )}
                         </div>
                         <div className="md-body">
@@ -765,12 +804,12 @@ export default function WorkspaceChatPage() {
 
                         {/* PDF sources */}
                         {m.sources?.length > 0 && (
-                          <div style={{ marginTop:10, display:'flex', flexWrap:'wrap', gap:5 }}>
+                          <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                             {m.sources.map((src, si) => (
                               <button key={si} className="source-chip" onClick={() => jumpToSource(src)} title={src.preview}>
-                                <FileText size={9} style={{ color:th.accent }} />
-                                {src.filename}
-                                <span style={{ opacity:0.4 }}>p.{src.page}</span>
+                                <FileText size={9} style={{ color: th.accent }} />
+                                {src.filename || src.fileName || 'Source'}
+                                <span style={{ opacity: 0.4 }}>p.{src.page}</span>
                               </button>
                             ))}
                           </div>
@@ -778,17 +817,17 @@ export default function WorkspaceChatPage() {
 
                         {/* Web papers */}
                         {m.papers?.length > 0 && (
-                          <div style={{ marginTop:12 }}>
-                            <div style={{ fontSize:10, color:th.textMuted, marginBottom:6, letterSpacing:'0.08em', textTransform:'uppercase', fontWeight:600 }}>Sources</div>
-                            <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
-                              {m.papers.slice(0,4).map((p, pi) => (
-                                <div key={pi} style={{ background:th.bg3, border:`1px solid ${th.border}`, borderRadius:8, padding:'8px 10px' }}>
-                                  <div style={{ fontSize:12, fontWeight:500, color:th.text, marginBottom:3, lineHeight:1.4 }}>{p.title}</div>
-                                  <div style={{ display:'flex', alignItems:'center', gap:8, fontSize:10, color:th.textMuted }}>
+                          <div style={{ marginTop: 12 }}>
+                            <div style={{ fontSize: 10, color: th.textMuted, marginBottom: 6, letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>Sources</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                              {m.papers.slice(0, 4).map((p, pi) => (
+                                <div key={pi} style={{ background: th.bg3, border: `1px solid ${th.border}`, borderRadius: 8, padding: '8px 10px' }}>
+                                  <div style={{ fontSize: 12, fontWeight: 500, color: th.text, marginBottom: 3, lineHeight: 1.4 }}>{p.title}</div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: th.textMuted }}>
                                     <span>{p.authors?.split(',')[0]}{p.year ? ` · ${p.year}` : ''}</span>
-                                    <span style={{ background:th.bg, border:`1px solid ${th.border}`, borderRadius:4, padding:'1px 5px' }}>{p.source}</span>
+                                    <span style={{ background: th.bg, border: `1px solid ${th.border}`, borderRadius: 4, padding: '1px 5px' }}>{p.source}</span>
                                     {p.url && (
-                                      <a href={p.url} target="_blank" rel="noreferrer" style={{ display:'flex', alignItems:'center', gap:3, color:th.accent, textDecoration:'none' }}>
+                                      <a href={p.url} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 3, color: th.accent, textDecoration: 'none' }}>
                                         <ExternalLink size={9} /> View
                                       </a>
                                     )}
@@ -801,7 +840,7 @@ export default function WorkspaceChatPage() {
                       </div>
                     </div>
                   ) : (
-                    <div style={{ display:'flex', justifyContent:'flex-end' }}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                       <div className="user-bubble">{m.content}</div>
                     </div>
                   )}
@@ -810,16 +849,16 @@ export default function WorkspaceChatPage() {
 
               {/* Typing indicator */}
               {sending && (
-                <div style={{ display:'flex', gap:10, alignItems:'flex-start', marginBottom:20 }} className="msg-fade">
+                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 20 }} className="msg-fade">
                   <div className="ai-avatar">
                     <svg viewBox="0 0 28 28" fill="none" width="14" height="14">
                       <rect x="5" y="4" width="14" height="20" rx="2" stroke={th.accent} strokeWidth="1.6" fill="none"/>
                       <rect x="9" y="4" width="14" height="20" rx="2" stroke={`${th.accent}55`} strokeWidth="1.6" fill={`${th.accent}08`}/>
                     </svg>
                   </div>
-                  <div style={{ display:'flex', gap:5, alignItems:'center', paddingTop:8 }}>
-                    {[0,1,2].map(n => (
-                      <div key={n} className="typing-dot" style={{ animationDelay:`${n*0.18}s` }} />
+                  <div style={{ display: 'flex', gap: 5, alignItems: 'center', paddingTop: 8 }}>
+                    {[0, 1, 2].map(n => (
+                      <div key={n} className="typing-dot" style={{ animationDelay: `${n * 0.18}s` }} />
                     ))}
                   </div>
                 </div>
@@ -834,15 +873,31 @@ export default function WorkspaceChatPage() {
                   ref={textareaRef}
                   value={input}
                   onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-                  placeholder={chatMode === 'internet' ? 'Search the research web…' : activePdf ? `Ask about ${activePdf.filename}…` : 'Ask Radium anything…'}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+                  }}
+                  placeholder={
+                    chatMode === 'internet'
+                      ? 'Search the research web…'
+                      : activePdf
+                        ? `Ask about ${activePdf.filename}…`
+                        : 'Ask Radium anything…'
+                  }
                   rows={2}
                 />
                 <div className="input-footer">
-                  <span style={{ fontSize:10, color:th.textMuted, fontWeight:300 }}>Enter to send · Shift+Enter for newline</span>
-                  <div style={{ flex:1 }} />
-                  <button className="send-btn" onClick={sendMessage} disabled={sending || !input.trim()}
-                    style={{ background: input.trim() ? th.accent : th.bg3, opacity: (!input.trim() || sending) ? 0.5 : 1, cursor: input.trim() ? 'pointer' : 'default' }}>
+                  <span style={{ fontSize: 10, color: th.textMuted, fontWeight: 300 }}>Enter to send · Shift+Enter for newline</span>
+                  <div style={{ flex: 1 }} />
+                  <button
+                    className="send-btn"
+                    onClick={sendMessage}
+                    disabled={sending || !input.trim()}
+                    style={{
+                      background: input.trim() ? th.accent : th.bg3,
+                      opacity: (!input.trim() || sending) ? 0.5 : 1,
+                      cursor: input.trim() ? 'pointer' : 'default',
+                    }}
+                  >
                     <Send size={12} style={{ color: input.trim() ? th.bg : th.textMuted }} />
                   </button>
                 </div>
@@ -852,79 +907,156 @@ export default function WorkspaceChatPage() {
             {/* ── GAPS PANEL ── */}
             {showGaps && (
               <div className="gap-panel">
-                <div style={{ display:'flex', alignItems:'center', padding:'11px 14px', borderBottom:`1px solid ${th.border}`, background:th.bg2, flexShrink:0 }}>
-                  {viewingAbstract ? (
-                    <button className="icon-btn" style={{ marginRight:8 }} onClick={() => { setViewingAbstract(null); setAbstractText(''); }}>
-                      <ChevronLeft size={13} />
-                    </button>
-                  ) : <Sparkles size={12} style={{ color:th.accent, marginRight:8 }} />}
-                  <span style={{ fontSize:13, fontWeight:600, flex:1, fontFamily:"'DM Serif Display', serif" }}>
-                    {viewingAbstract ? 'Generated Abstract' : 'Research Gaps'}
+
+                {/* Header */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', padding: '11px 14px',
+                  borderBottom: `1px solid ${th.border}`,
+                  background: th.bg2, flexShrink: 0,
+                }}>
+                  <Sparkles size={12} style={{ color: th.accent, marginRight: 8 }} />
+                  <span style={{ fontSize: 13, fontWeight: 600, flex: 1, fontFamily: "'DM Serif Display', serif" }}>
+                    Research Gaps
                   </span>
-                  <button className="icon-btn" style={{ marginRight:6 }} onClick={loadGaps} disabled={loadingGaps} title="Refresh">
-                    {loadingGaps ? <Loader2 size={12} style={{ animation:'spin 0.8s linear infinite' }} /> : <BarChart2 size={12} />}
+                  <button className="icon-btn" style={{ marginRight: 6 }} onClick={loadGaps} disabled={loadingGaps} title="Refresh">
+                    {loadingGaps
+                      ? <Loader2 size={12} style={{ animation: 'spin 0.8s linear infinite' }} />
+                      : <BarChart2 size={12} />}
                   </button>
-                  <button className="icon-btn" onClick={() => { setShowGaps(false); setViewingAbstract(null); }}>
+                  <button className="icon-btn" onClick={() => { setShowGaps(false); setExpandedGapId(null); }}>
                     <X size={13} />
                   </button>
                 </div>
 
-                {!viewingAbstract ? (
-                  <div style={{ flex:1, overflowY:'auto', padding:12, display:'flex', flexDirection:'column', gap:10 }}>
-                    {loadingGaps && (
-                      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', gap:12 }}>
-                        <Loader2 size={22} style={{ color:th.accent, animation:'spin 0.8s linear infinite' }} />
-                        <div style={{ fontSize:11, color:th.textMuted, fontWeight:300 }}>Analysing documents…</div>
+                {/* List */}
+                <div style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+                  {/* Loading */}
+                  {loadingGaps && (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 12 }}>
+                      <Loader2 size={22} style={{ color: th.accent, animation: 'spin 0.8s linear infinite' }} />
+                      <div style={{ fontSize: 11, color: th.textMuted, fontWeight: 300 }}>Analysing documents…</div>
+                    </div>
+                  )}
+
+                  {/* Empty */}
+                  {!loadingGaps && researchGaps.length === 0 && (
+                    <div style={{ textAlign: 'center', padding: '40px 16px', color: th.textMuted }}>
+                      <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 15, fontStyle: 'italic', marginBottom: 6, color: th.textSub }}>
+                        No gaps yet
                       </div>
-                    )}
-                    {!loadingGaps && researchGaps.length === 0 && (
-                      <div style={{ textAlign:'center', padding:'40px 16px', color:th.textMuted }}>
-                        <div style={{ fontFamily:"'DM Serif Display', serif", fontSize:15, fontStyle:'italic', marginBottom:6, color:th.textSub }}>No gaps yet</div>
-                        <div style={{ fontSize:12, fontWeight:300 }}>Click refresh to analyse your documents.</div>
-                      </div>
-                    )}
-                    {researchGaps.map((gap, i) => {
-                      const col = GAP_COLORS[gap.type] || th.accent;
-                      return (
-                        <div key={gap.id || i} className="gap-card">
-                          <div style={{ fontSize:9, fontWeight:700, color:col, letterSpacing:'0.1em', textTransform:'uppercase', marginBottom:5 }}>{gap.type}</div>
-                          <div style={{ fontSize:13, fontWeight:500, color:th.text, marginBottom:5, lineHeight:1.4, fontFamily:"'DM Serif Display', serif" }}>{gap.title}</div>
-                          {gap.description && <div style={{ fontSize:12, color:th.textSub, lineHeight:1.6, fontWeight:300 }}>{gap.description}</div>}
-                          {gap.citations?.length > 0 && (
-                            <div style={{ display:'flex', flexWrap:'wrap', gap:4, marginTop:8 }}>
-                              {gap.citations.map((c, ci) => (
-                                <div key={ci} style={{ display:'flex', alignItems:'center', gap:3, background:th.bg3, border:`1px solid ${th.border}`, borderRadius:4, padding:'2px 6px', fontSize:10, color:th.textMuted }}>
-                                  <FileText size={9} />{c.filename}
-                                </div>
-                              ))}
+                      <div style={{ fontSize: 12, fontWeight: 300 }}>Click refresh to analyse your documents.</div>
+                    </div>
+                  )}
+
+                  {/* Gap cards */}
+                  {researchGaps.map((gap, i) => {
+                    const col      = GAP_COLORS[gap.type] || th.accent;
+                    const isOpen   = expandedGapId === gap.id;
+                    const abstract = gapAbstracts[gap.id];
+
+                    return (
+                      <div
+                        key={gap.id || i}
+                        className={`gap-card${isOpen ? ' expanded' : ''}`}
+                        onClick={() => toggleGap(gap)}
+                      >
+                        {/* Type + chevron row */}
+                        <div style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          marginBottom: 5,
+                        }}>
+                          <span style={{ fontSize: 9, fontWeight: 700, color: col, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                            {gap.type || 'RESEARCH GAP'}
+                          </span>
+                          <span style={{
+                            color: th.textMuted, fontSize: 12, lineHeight: 1,
+                            display: 'inline-block',
+                            transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                            transition: 'transform 0.2s',
+                          }}>
+                            ▾
+                          </span>
+                        </div>
+
+                        {/* Title */}
+                        <div style={{
+                          fontSize: 13, fontWeight: 500, color: th.text,
+                          lineHeight: 1.4, fontFamily: "'DM Serif Display', serif",
+                          marginBottom: gap.description ? 6 : 0,
+                        }}>
+                          {gap.title}
+                        </div>
+
+                        {/* Description — always visible */}
+                        {gap.description && (
+                          <div style={{ fontSize: 12, color: th.textSub, lineHeight: 1.6, fontWeight: 300 }}>
+                            {gap.description}
+                          </div>
+                        )}
+
+                        {/* Citation chips */}
+                        {gap.citations?.length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
+                            {gap.citations.map((c, ci) => (
+                              <div key={ci} style={{
+                                display: 'flex', alignItems: 'center', gap: 3,
+                                background: th.bg3, border: `1px solid ${th.border}`,
+                                borderRadius: 4, padding: '2px 6px',
+                                fontSize: 10, color: th.textMuted,
+                              }}>
+                                <FileText size={9} /> {c.filename}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Expanded: inline abstract */}
+                        {isOpen && (
+                          <div
+                            style={{ marginTop: 12, borderTop: `1px solid ${th.border}`, paddingTop: 12, animation: 'fadeUp 0.18s ease both' }}
+                            onClick={e => e.stopPropagation()}
+                          >
+                            <div style={{
+                              fontSize: 10, fontWeight: 700, color: th.accent,
+                              letterSpacing: '0.1em', textTransform: 'uppercase',
+                              marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5,
+                            }}>
+                              <Sparkles size={9} /> Generated Abstract
                             </div>
-                          )}
-                          <button className="gap-abstract-btn" onClick={() => generateAbstract(gap)}>
-                            <Sparkles size={10} /> Generate abstract
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div style={{ flex:1, overflowY:'auto', padding:16, display:'flex', flexDirection:'column', gap:14 }}>
-                    <div style={{ fontSize:13, fontWeight:500, color:th.accent, fontFamily:"'DM Serif Display', serif", fontStyle:'italic' }}>{viewingAbstract.title}</div>
-                    {genAbstract ? (
-                      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', flex:1, gap:12 }}>
-                        <Loader2 size={22} style={{ color:th.accent, animation:'spin 0.8s linear infinite' }} />
-                        <div style={{ fontSize:11, color:th.textMuted, fontWeight:300 }}>Synthesising abstract…</div>
+
+                            {abstract?.loading ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0' }}>
+                                <Loader2 size={13} style={{ color: th.accent, animation: 'spin 0.8s linear infinite', flexShrink: 0 }} />
+                                <span style={{ fontSize: 11, color: th.textMuted, fontWeight: 300 }}>Synthesising abstract…</span>
+                              </div>
+                            ) : abstract?.text ? (
+                              <>
+                                <div style={{ fontSize: 12, color: th.text, lineHeight: 1.75, fontWeight: 300 }}>
+                                  {abstract.text}
+                                </div>
+                                <div style={{
+                                  marginTop: 10,
+                                  background: th.accentDim, border: `1px solid ${th.accentBdr}`,
+                                  borderRadius: 7, padding: '7px 10px',
+                                  fontSize: 10, color: th.accent,
+                                  display: 'flex', alignItems: 'flex-start', gap: 5,
+                                }}>
+                                  <Sparkles size={9} style={{ flexShrink: 0, marginTop: 1 }} />
+                                  Based on {workspacePdfs.length} document{workspacePdfs.length !== 1 ? 's' : ''} in this workspace.
+                                </div>
+                              </>
+                            ) : (
+                              <div style={{ fontSize: 11, color: th.textMuted, fontWeight: 300, fontStyle: 'italic' }}>
+                                Loading…
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <>
-                        <div style={{ fontSize:13, color:th.text, lineHeight:1.75, whiteSpace:'pre-wrap', fontWeight:300 }}>{abstractText}</div>
-                        <div style={{ marginTop:'auto', background:th.accentDim, border:`1px solid ${th.accentBdr}`, borderRadius:8, padding:10, fontSize:11, color:th.accent, display:'flex', alignItems:'flex-start', gap:6 }}>
-                          <Sparkles size={11} style={{ flexShrink:0, marginTop:1 }} />
-                          Based on {workspacePdfs.length} document{workspacePdfs.length !== 1 ? 's' : ''} in this workspace.
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
@@ -932,12 +1064,14 @@ export default function WorkspaceChatPage() {
 
         {/* ── STATUS BAR ── */}
         <div className="status-bar">
-          <div style={{ display:'flex', alignItems:'center', gap:5 }}>
-            <div style={{ width:5, height:5, borderRadius:'50%', background:'#4ade80' }} />
-            <span style={{ fontSize:10, color:th.textMuted, fontWeight:300 }}>{workspacePdfs.length} doc{workspacePdfs.length !== 1 ? 's' : ''} indexed</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#4ade80' }} />
+            <span style={{ fontSize: 10, color: th.textMuted, fontWeight: 300 }}>
+              {workspacePdfs.length} doc{workspacePdfs.length !== 1 ? 's' : ''} indexed
+            </span>
           </div>
-          <div style={{ flex:1 }} />
-          <span style={{ fontSize:10, color:th.textMuted, letterSpacing:'0.08em', textTransform:'uppercase', fontWeight:500 }}>
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 10, color: th.textMuted, letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 500 }}>
             Radium · {chatMode === 'internet' ? 'Web Mode' : 'RAG Mode'}
           </span>
         </div>

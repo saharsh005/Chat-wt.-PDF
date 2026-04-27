@@ -46,7 +46,7 @@ export default function PdfViewer({ pdfId, page = 1 }) {
   if (loading) return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 10, color: "#555" }}>
       <Loader2 size={22} style={{ animation: "spin 0.8s linear infinite", color: "#6495ed" }} />
-      <span style={{ fontSize: 12 }}>Loading PDF…</span>
+      <span style={{ fontSize: 12 }}>Loading PDF...</span>
     </div>
   );
 

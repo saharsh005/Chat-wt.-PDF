@@ -62,10 +62,18 @@ STRICT RULES — you MUST follow all of these:
    Do NOT fill the gap with hallucinated facts.
 
 5. STRUCTURE your answer as:
-   • Key Finding (1-2 sentences directly answering the question)
-   • Detailed Comparison / Explanation (with inline [n] citations)
-   • Gaps (list anything the question asked about that the context
-     does NOT cover — be honest, do not fabricate)
+   • Direct Answer (2-4 sentences that answer the question explicitly)
+   • Evidence and Analysis:
+     - Provide at least 4 evidence-backed points if context allows.
+     - Include mechanisms, methods, assumptions, and outcomes where available.
+     - For comparison questions, include at least 2 explicit contrasts.
+   • Gaps:
+     - List exactly what is missing from the provided documents.
+     - Suggest what document type/section would be needed to answer fully.
+
+6. DEPTH REQUIREMENT:
+   If context is available, do not give a brief generic summary.
+   Produce a detailed academic answer (typically 180+ words) with dense, useful detail.
 
 ════════════════════════════════════════
 OUTPUT FORMAT — respond ONLY with valid JSON, no markdown fences:
@@ -79,51 +87,52 @@ OUTPUT FORMAT — respond ONLY with valid JSON, no markdown fences:
 
 /**
  * Builds the research-gaps prompt.
+ *
+ * IMPORTANT: This receives sampled excerpts (~8 000 chars max), NOT the
+ * full PDF text. The sampling is done in the worker / route before calling
+ * this function. Do NOT pass raw full-document text here.
+ *
+ * Changes from original:
+ *   - Raised gap count to 4–6 (3 was too few for multi-paper workspaces)
+ *   - Added mandatory `type` field so the frontend can colour-code cards
+ *   - Tightened instructions to avoid hallucination on thin context
  */
-export function buildGapsPrompt(contextText) {
-  return `You are Radium, a research assistant that identifies open research gaps from the provided documents.
-
-CONTEXT:
-${contextText}
-
-Instructions:
-1. Identify up to 3 important research gaps or unanswered questions.
-2. For each gap, provide a title and a short description.
-3. Use only the information in the context. If the context is insufficient, return an empty gaps list.
-4. Output valid JSON only.
-
-Example output:
-{
-  "gaps": [
-    {
-      "title": "...",
-      "description": "..."
-    }
-  ]
-}`;
+export function buildGapsPrompt(sampledExcerpts) {
+  return `You are a research analyst. Read these document excerpts and identify 3 to 5 research gaps.
+ 
+EXCERPTS:
+${sampledExcerpts}
+ 
+Rules:
+- Only identify gaps based on what IS in the excerpts — do not invent topics.
+- Each gap needs: title (8–12 words), description (1–2 sentences), type.
+- Type must be exactly one of: METHODOLOGICAL GAP | THEORETICAL GAP | EMPIRICAL GAP | APPLICATION GAP | POPULATION GAP
+- If context is insufficient, return empty gaps array.
+- Return valid JSON only, no markdown, no explanation.
+ 
+{"gaps":[{"title":"...","description":"...","type":"..."}]}`;
 }
 
 /**
  * Builds the abstract generation prompt.
+ *
+ * Changes from original:
+ *   - Accepts sampled context (caller truncates to ~3 000 chars) instead of
+ *     raw full-document text, preventing context-window overflow.
+ *   - Added structured abstract sections in the instruction so the output
+ *     is consistently formatted for the frontend.
  */
-export function buildAbstractPrompt(gapTitle, gapDescription, contextText, pdfCount) {
-  return `You are Radium, an academic research assistant.
-
-The goal is to write a short abstract for a research direction based on the gap described below.
-
-Gap Title: ${gapTitle}
-Gap Description: ${gapDescription}
-
-Context from ${pdfCount} PDF document(s):
-${contextText}
-
-Instructions:
-- Use only the provided context.
-- If the context does not contain enough information to write a useful abstract, say "Insufficient context to draft an abstract."
-- Keep the abstract concise and academic.
-- Do not invent details.
-
-Write the abstract as a single paragraph.`;
+export function buildAbstractPrompt(gapTitle, gapDescription, sampledContext, pdfCount) {
+  return `You are an academic researcher. Write a 150–200 word abstract for a study addressing this gap.
+ 
+GAP: ${gapTitle}
+${gapDescription ? `DESCRIPTION: ${gapDescription}` : ""}
+ 
+CONTEXT FROM ${pdfCount} DOCUMENT(S):
+${sampledContext || "No context available."}
+ 
+Write a single paragraph covering: background, the gap, study objective, proposed methods, expected contribution.
+Third person, present/future tense. No headers. No quotes. If context is insufficient, say so in one sentence.`;
 }
 
 /**

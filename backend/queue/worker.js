@@ -10,8 +10,10 @@ import { Worker } from "bullmq";
 import pdf from "pdf-parse/lib/pdf-parse.js";
 import { v4 as uuidv4 } from "uuid";
 import { QdrantClient } from "@qdrant/js-client-rest";
+import Groq from "groq-sdk";
 import { getEmbedding } from "../utils/embeddings.js";
 import { supabase } from "../utils/supabase.js";
+import { buildGapsPrompt } from "../rag/prompts.js";
 
 // ─── Config ───────────────────────────────────────────────
 const REDIS_CONNECTION = {
@@ -22,6 +24,118 @@ const REDIS_CONNECTION = {
 
 const QDRANT_URL  = process.env.QDRANT_URL || "http://localhost:6333";
 const VECTOR_SIZE = 384;
+
+let ai = null;
+function getAi() {
+  if (!ai) ai = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  return ai;
+}
+
+async function generateAndStoreResearchGaps(workspaceId) {
+  if (!workspaceId) return;
+  const collectionName = `workspace_${workspaceId}`;
+ 
+  const { points: allChunks } = await qdrant.scroll(collectionName, {
+    filter: { must: [{ key: "workspaceId", match: { value: workspaceId } }] },
+    limit: 100,
+    with_payload: true,
+  });
+ 
+  if (!allChunks?.length) {
+    console.log(`ℹ️  No chunks found for workspace ${workspaceId}, skipping gap generation.`);
+    return;
+  }
+ 
+  // ── Token-budget-aware sampling ──────────────────────────────────────────
+  // Groq free tier: 12,000 TPM hard limit
+  // Prompt template ≈ 500 tokens, output reserve = 2,000 tokens
+  // Remaining for context ≈ 9,500 tokens ÷ 4 chars/token ≈ 3,800 chars
+  // Using 1,600 chars to stay well within limit with safety margin
+  const SAMPLE_COUNT = 8;    // ↓ from 20
+  const EXCERPT_LEN  = 150;  // ↓ from 400 chars per chunk
+  const MAX_CONTEXT  = 1600; // ↓ from 8000
+ 
+  const step    = Math.max(1, Math.floor(allChunks.length / SAMPLE_COUNT));
+  const sampled = [];
+  for (let i = 0; i < allChunks.length && sampled.length < SAMPLE_COUNT; i += step) {
+    sampled.push(allChunks[i]);
+  }
+  // Include last chunk for conclusion coverage
+  if (allChunks.length > 1) {
+    const last = allChunks[allChunks.length - 1];
+    if (!sampled.find(c => c.id === last.id)) sampled.push(last);
+  }
+ 
+  let combinedText = "";
+  for (const c of sampled) {
+    const section = c.payload.section ? `[${c.payload.section}]` : "[Excerpt]";
+    const text    = (c.payload.text || "").slice(0, EXCERPT_LEN).replace(/\s+/g, " ").trim();
+    const excerpt = `${section}\n${text}\n\n---\n\n`;
+    if (combinedText.length + excerpt.length > MAX_CONTEXT) break;
+    combinedText += excerpt;
+  }
+  combinedText = combinedText.trim();
+ 
+  console.log(`📊 Sending ${sampled.length} excerpts (${combinedText.length} chars / ~${Math.ceil(combinedText.length / 4)} tokens) to LLM`);
+ 
+  const prompt = buildGapsPrompt(combinedText);
+ 
+  const completion = await getAi().chat.completions.create({
+    model:           "llama-3.3-70b-versatile",
+    messages:        [{ role: "user", content: prompt }],
+    temperature:     0.3,
+    max_tokens:      1500,  // ↓ from 2000
+    response_format: { type: "json_object" },
+  });
+ 
+  const rawContent = completion?.choices?.[0]?.message?.content;
+  let parsed = { gaps: [] };
+  if (rawContent) {
+    try { parsed = JSON.parse(rawContent); }
+    catch (parseErr) { console.warn("Research gaps parse error:", parseErr); }
+  }
+ 
+  const gaps = Array.isArray(parsed.gaps) ? parsed.gaps : [];
+  if (!gaps.length) {
+    console.log(`ℹ️  No structured gaps returned for workspace ${workspaceId}.`);
+    return;
+  }
+ 
+  // Collect source PDF names
+  const pdfIds = new Set(allChunks.map(c => c.payload.pdfId).filter(Boolean));
+  let relatedPdfs = [];
+  if (pdfIds.size > 0) {
+    const { data: pdfData } = await supabase
+      .from("user_pdfs")
+      .select("pdf_id, filename")
+      .in("pdf_id", Array.from(pdfIds));
+    relatedPdfs = (pdfData || []).slice(0, 3).map(p => p.filename || p.pdf_id);
+  }
+ 
+  const records = gaps.map((gap, index) => ({
+    workspace_id: workspaceId,
+    gap_text: [
+      (gap.title?.trim()       || `Research Gap ${index + 1}`),
+      (gap.description?.trim() || ""),
+    ].filter(Boolean).join("\n\n"),
+    gap_type:     gap.type?.trim() || "RESEARCH GAP",
+    confidence:   0,
+    related_pdfs: relatedPdfs,
+  }));
+ 
+  const { error: deleteErr } = await supabase
+    .from("research_gaps")
+    .delete()
+    .eq("workspace_id", workspaceId);
+  if (deleteErr) console.warn("Could not clear previous research gaps:", deleteErr.message);
+ 
+  const { error: insertErr } = await supabase
+    .from("research_gaps")
+    .insert(records);
+  if (insertErr) console.warn("Could not store research gaps:", insertErr.message);
+  else console.log(`✅ Stored ${records.length} research gaps for workspace ${workspaceId}`);
+}
+ 
 
 const CHUNK_TARGET  = 800;
 const CHUNK_MIN     = 250;
@@ -75,18 +189,20 @@ async function ensureCollection(name) {
  */
 async function fetchPdfMeta(pdfId) {
   const { data, error } = await supabase
-    .from("pdfs")
-    .select("id, file_name, title")
-    .eq("id", pdfId)
+    .from("user_pdfs")
+    .select("pdf_id, filename")
+    .eq("pdf_id", pdfId)
     .single();
 
   if (error) {
     console.warn("⚠️  Could not fetch PDF metadata:", error.message);
     return { fileName: "unknown.pdf", pdfTitle: "Untitled" };
   }
+  const name = data.filename || "unknown.pdf";
+  const title = name.replace(/\.pdf$/i, "").trim() || name;
   return {
-    fileName: data.file_name ?? "unknown.pdf",
-    pdfTitle: data.title ?? data.file_name ?? "Untitled",
+    fileName: name,
+    pdfTitle: title,
   };
 }
 
@@ -329,6 +445,13 @@ new Worker(
       .eq("id", pdfId);
 
     if (updateErr) console.warn("⚠️  Could not update indexing status:", updateErr.message);
+
+    try {
+      await generateAndStoreResearchGaps(workspaceId);
+      console.log("✅ Research gaps generated for workspace:", workspaceId);
+    } catch (gapErr) {
+      console.error("❌ Research gap generation failed:", gapErr);
+    }
 
     console.log("✅ Done:", pdfId, "→", collectionName);
   },

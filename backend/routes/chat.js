@@ -5,6 +5,7 @@ import { supabase } from "../utils/supabase.js";
 import { buildRagPrompt } from "../rag/prompts.js";
 import {
   retrieveChunks,
+  rerankChunks,
   diversifyChunks,
   buildContext,
   buildSources,
@@ -80,21 +81,43 @@ router.post("/", clerkAuth, async (req, res) => {
     // 3. Retrieve + diversify chunks across all PDFs in the workspace
     //    retrieveChunks searches the workspace_{workspaceId} collection,
     //    filtering to only the PDFs that belong to this workspace.
-    const rawChunks = await retrieveChunks({
+    let rawChunks = await retrieveChunks({
       workspaceId,
       query:  question,
       pdfIds: validPdfIds,   // scoped to this workspace's PDFs
-      topK:   14,
-      scoreThreshold: 0.35,
+      topK:   32,
+      scoreThreshold: 0.2,
     });
+    if (rawChunks.length < 6) {
+      // Fallback recall pass for narrow or phrased queries.
+      rawChunks = await retrieveChunks({
+        workspaceId,
+        query: question,
+        pdfIds: validPdfIds,
+        topK: 40,
+        scoreThreshold: 0.1,
+      });
+    }
 
     // diversifyChunks guarantees at least one chunk per document before
     // filling remaining slots by relevance score.
-    const hits    = diversifyChunks(rawChunks, 10);
+    const reranked = rerankChunks(question, rawChunks);
+    const hits     = diversifyChunks(reranked, 16);
 
     // 4. Build prompt context and sources
     const { context, citations } = buildContext(hits);
-    const sources                = buildSources(hits);
+    const sources                = buildSources(hits, citations);
+    const pdfById                = new Map(workspacePdfs.map((p) => [p.pdf_id, p]));
+    const normalizedSources      = sources.map((src) => {
+      const meta = pdfById.get(src.pdfId);
+      const realName = meta?.filename || src.filename || src.fileName || "Document";
+      return {
+        ...src,
+        filename: realName,
+        fileName: realName,
+        pdfTitle: src.pdfTitle && src.pdfTitle !== "Untitled" ? src.pdfTitle : realName,
+      };
+    });
 
     // 5. LLM answer
     const prompt = buildRagPrompt(context, historyText, question);
@@ -106,11 +129,12 @@ router.post("/", clerkAuth, async (req, res) => {
       response_format: { type: "json_object" },
     });
 
+    const rawAnswer = completion?.choices?.[0]?.message?.content || "";
     let parsed;
     try {
-      parsed = JSON.parse(completion.choices[0].message.content);
+      parsed = JSON.parse(rawAnswer);
     } catch {
-      parsed = { answer: completion.choices[0].message.content, gaps: [] };
+      parsed = { answer: rawAnswer, gaps: [] };
     }
 
     const answer = parsed.answer || "No answer generated.";
@@ -119,7 +143,7 @@ router.post("/", clerkAuth, async (req, res) => {
     // 6. Persist messages
     await supabase.from("messages").insert([
       { chat_id: chatId, role: "user",      content: question },
-      { chat_id: chatId, role: "assistant", content: answer, sources },
+      { chat_id: chatId, role: "assistant", content: answer, sources: normalizedSources },
     ]);
 
     await supabase.from("chats").update({ created_at: new Date() }).eq("id", chatId);
@@ -128,7 +152,7 @@ router.post("/", clerkAuth, async (req, res) => {
       chatId,
       answer,
       gaps,
-      sources,
+      sources: normalizedSources,
       citations,              // numbered citation map for the frontend
       chunkCount: hits.length,
       mode: "pdf-rag",
@@ -161,7 +185,10 @@ Question: ${question}`,
     });
 
     let kwData = { keywords: [], authors: [] };
-    try { kwData = JSON.parse(kwCompletion.choices[0].message.content); } catch {}
+    try {
+      const rawKeywords = kwCompletion?.choices?.[0]?.message?.content || "{}";
+      kwData = JSON.parse(rawKeywords);
+    } catch {}
 
     const keywords    = kwData.keywords || [];
     const authors     = kwData.authors  || [];
@@ -241,7 +268,7 @@ Provide a clear, cited academic answer in Markdown.`;
       max_tokens:  3000,
     });
 
-    const answer = answerCompletion.choices[0].message.content;
+    const answer = answerCompletion?.choices?.[0]?.message?.content || "No response generated.";
 
     if (chatId) {
       await supabase.from("messages").insert([
