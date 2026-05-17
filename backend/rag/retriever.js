@@ -1,8 +1,7 @@
-import { QdrantClient } from "@qdrant/js-client-rest";
 import { getEmbedding } from "../utils/embeddings.js";
+import { createQdrantClient } from "../utils/qdrant.js";
 
-const QDRANT_URL = process.env.QDRANT_URL || "http://localhost:6333";
-const qdrant     = new QdrantClient({ url: QDRANT_URL, timeout: 30_000 });
+const qdrant = createQdrantClient({ timeout: 30_000 });
 
 // ─── Core Retrieval ───────────────────────────────────────
 /**

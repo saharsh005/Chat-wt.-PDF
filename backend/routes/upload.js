@@ -2,7 +2,6 @@ import express from "express";
 import multer from 'multer';
 import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf";
 import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
-import { QdrantClient } from "@qdrant/js-client-rest";
 import { getEmbedding } from "../utils/embeddings.js";
 import { v4 as uuidv4 } from 'uuid';
 import { clerkAuth } from "../middleware/auth.js";
@@ -26,11 +25,6 @@ const upload = multer({
   }
 });
 
-
-const qdrant = new QdrantClient({
-  url: "http://localhost:6333",
-  timeout: 120000 // 2 minutes
-});
 
 router.post("/", clerkAuth, upload.single("pdf"), async (req, res) => {
   try {

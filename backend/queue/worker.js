@@ -9,20 +9,16 @@ dotenv.config({ path: path.join(__dirname, "../.env") });
 import { Worker } from "bullmq";
 import pdf from "pdf-parse/lib/pdf-parse.js";
 import { v4 as uuidv4 } from "uuid";
-import { QdrantClient } from "@qdrant/js-client-rest";
 import Groq from "groq-sdk";
 import { getEmbedding } from "../utils/embeddings.js";
 import { supabase } from "../utils/supabase.js";
 import { buildGapsPrompt } from "../rag/prompts.js";
+import { createRedisConnection } from "./redisConnection.js";
+import { createQdrantClient } from "../utils/qdrant.js";
 
 // ─── Config ───────────────────────────────────────────────
-const REDIS_CONNECTION = {
-  host: process.env.REDIS_HOST || "localhost",
-  port: parseInt(process.env.REDIS_PORT || "6379"),
-  maxRetriesPerRequest: null,
-};
+const REDIS_CONNECTION = createRedisConnection();
 
-const QDRANT_URL  = process.env.QDRANT_URL || "http://localhost:6333";
 const VECTOR_SIZE = 384;
 
 let ai = null;
@@ -144,7 +140,7 @@ const CHUNK_OVERLAP = 150;
 const BATCH_SIZE    = 15;
 
 const sleep  = (ms) => new Promise((res) => setTimeout(res, ms));
-const qdrant = new QdrantClient({ url: QDRANT_URL, timeout: 60_000 });
+const qdrant = createQdrantClient({ timeout: 60_000 });
 
 // ─── Qdrant Collection Setup ──────────────────────────────
 /**

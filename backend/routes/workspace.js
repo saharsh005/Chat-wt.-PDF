@@ -1,12 +1,12 @@
 import express from "express";
 import Groq from "groq-sdk";
-import { QdrantClient } from "@qdrant/js-client-rest";
 import { clerkAuth } from "../middleware/auth.js";
 import { supabase } from "../utils/supabase.js";
 import { buildGapsPrompt, buildAbstractPrompt } from "../rag/prompts.js";
+import { createQdrantClient } from "../utils/qdrant.js";
 
 const router = express.Router();
-const qdrant = new QdrantClient({ url: process.env.QDRANT_URL || "http://localhost:6333" });
+const qdrant = createQdrantClient();
 
 let ai = null;
 function getAi() {

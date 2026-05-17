@@ -1,10 +1,8 @@
 import { QdrantVectorStore } from "@langchain/qdrant";
-import { QdrantClient } from "@qdrant/js-client-rest";
+import { createQdrantClient } from "../utils/qdrant.js";
 
 export async function createStore(docs, pdfId, embeddings) {
-  const client = new QdrantClient({
-    url: "http://localhost:6333"
-  });
+  const client = createQdrantClient();
 
   return await QdrantVectorStore.fromDocuments(docs, embeddings, {
     client,
@@ -13,9 +11,7 @@ export async function createStore(docs, pdfId, embeddings) {
 }
 
 export async function loadStore(pdfId, embeddings) {
-  const client = new QdrantClient({
-    url: "http://localhost:6333"
-  });
+  const client = createQdrantClient();
 
   return await QdrantVectorStore.fromExistingCollection(embeddings, {
     client,
